@@ -1,0 +1,6 @@
+*.db
+.env
+whatsmeow.db
+database.db
+ai-receptionist
+.DS_Store
