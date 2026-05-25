@@ -5,5 +5,16 @@
   "mode": "receptionist",
   "reply_to_groups": false,
   "reply_to_self_chat": true,
-  "business_description": "We build fast, conversion-focused websites and landing pages for small businesses and coaches. Typical projects: landing pages, full sites, redesigns. We qualify leads on budget, timeline, and scope before scheduling a call."
+  "business_description": "We build fast, conversion-focused websites and landing pages for small businesses and coaches. Typical projects: landing pages, full sites, redesigns. We qualify leads on budget, timeline, and scope before scheduling a call.",
+  "allowed_numbers": [],
+  "blocked_numbers": [],
+  "quiet_hours": {
+    "enabled": false,
+    "tz": "Asia/Dhaka",
+    "start": "22:00",
+    "end": "08:00"
+  },
+  "debounce_seconds": 3,
+  "webhook_url": "",
+  "webhook_secret": ""
 }

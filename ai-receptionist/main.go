@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 
 	"ai-receptionist/internal/ai"
@@ -15,6 +16,15 @@ import (
 
 	"go.mau.fi/whatsmeow/types/events"
 )
+
+func loadStyleExamples() string {
+	path := envOr("STYLE_EXAMPLES_PATH", "style-examples.txt")
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(b))
+}
 
 func envOr(key, def string) string {
 	if v := os.Getenv(key); v != "" {
@@ -68,7 +78,8 @@ func main() {
 		os.Exit(1)
 	}
 
-	handler = receptionist.New(cfg, appStore, aiClient, waClient, promptTpl)
+	styleExtra := loadStyleExamples()
+	handler = receptionist.New(cfg, appStore, aiClient, waClient, promptTpl, styleExtra)
 
 	if err := waClient.Start(ctx); err != nil {
 		fmt.Fprintln(os.Stderr, "start:", err)

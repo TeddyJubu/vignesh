@@ -67,12 +67,14 @@ func IsBroadcast(chat types.JID) bool {
 }
 
 type InboundFilter struct {
-	OwnerPhone    string
-	ReplyToGroups bool
-	ReplyToSelf   bool
-	OwnJID        types.JID
-	Sent          *OutboundTracker
-	Normalize     func(string) string
+	OwnerPhone     string
+	ReplyToGroups  bool
+	ReplyToSelf    bool
+	OwnJID         types.JID
+	Sent           *OutboundTracker
+	Normalize      func(string) string
+	AllowedNumbers []string // if non-empty, only these senders are processed
+	BlockedNumbers []string
 }
 
 // IsSelfChat detects WhatsApp "Message yourself" (notes-to-self).
@@ -150,6 +152,13 @@ func ShouldProcessInbound(v *events.Message, f InboundFilter) (ctx InboundContex
 		return InboundContext{}, false
 	}
 
+	if isBlocked(sender, f.BlockedNumbers) {
+		return InboundContext{}, false
+	}
+	if !isAllowed(sender, f.AllowedNumbers) {
+		return InboundContext{}, false
+	}
+
 	convID := sender
 	if selfChat {
 		convID = "self:" + sender
@@ -165,6 +174,27 @@ func ShouldProcessInbound(v *events.Message, f InboundFilter) (ctx InboundContex
 		IsGroup:    isGroup,
 		SenderName: senderLabel(v),
 	}, true
+}
+
+func isBlocked(sender string, blocked []string) bool {
+	for _, n := range blocked {
+		if n == sender {
+			return true
+		}
+	}
+	return false
+}
+
+func isAllowed(sender string, allowed []string) bool {
+	if len(allowed) == 0 {
+		return true
+	}
+	for _, n := range allowed {
+		if n == sender {
+			return true
+		}
+	}
+	return false
 }
 
 func senderLabel(v *events.Message) string {

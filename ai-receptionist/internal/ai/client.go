@@ -10,6 +10,8 @@ import (
 	"os"
 	"strings"
 	"time"
+
+	"ai-receptionist/internal/ops"
 )
 
 const openAIURL = "https://api.openai.com/v1/chat/completions"
@@ -71,38 +73,66 @@ func (c *Client) Complete(ctx context.Context, messages []ChatMessage, jsonMode 
 		return "", err
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, openAIURL, bytes.NewReader(body))
+	raw, status, err := c.postOnce(ctx, body)
 	if err != nil {
 		return "", err
+	}
+	if shouldRetry(status) {
+		time.Sleep(2 * time.Second)
+		raw, status, err = c.postOnce(ctx, body)
+		if err != nil {
+			ops.AppendErrorLog("openai", err)
+			return "", err
+		}
+	}
+	if status < 200 || status >= 300 {
+		apiErr := fmt.Errorf("OpenAI HTTP %d: %s", status, string(raw))
+		ops.AppendErrorLog("openai", apiErr)
+		return "", apiErr
+	}
+
+	var out chatResponse
+	if err := json.Unmarshal(raw, &out); err != nil {
+		ops.AppendErrorLog("openai", err)
+		return "", err
+	}
+	if out.Error != nil && out.Error.Message != "" {
+		apiErr := fmt.Errorf("OpenAI error: %s", out.Error.Message)
+		ops.AppendErrorLog("openai", apiErr)
+		return "", apiErr
+	}
+	if len(out.Choices) == 0 {
+		apiErr := fmt.Errorf("OpenAI returned no choices")
+		ops.AppendErrorLog("openai", apiErr)
+		return "", apiErr
+	}
+	return out.Choices[0].Message.Content, nil
+}
+
+func shouldRetry(status int) bool {
+	return status == 429 || status >= 500
+}
+
+func (c *Client) postOnce(ctx context.Context, body []byte) ([]byte, int, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, openAIURL, bytes.NewReader(body))
+	if err != nil {
+		return nil, 0, err
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+c.apiKey)
 
 	resp, err := c.http.Do(req)
 	if err != nil {
-		return "", err
+		ops.AppendErrorLog("openai", err)
+		return nil, 0, err
 	}
 	defer resp.Body.Close()
 
 	raw, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return "", err
+		return nil, resp.StatusCode, err
 	}
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return "", fmt.Errorf("OpenAI HTTP %d: %s", resp.StatusCode, string(raw))
-	}
-
-	var out chatResponse
-	if err := json.Unmarshal(raw, &out); err != nil {
-		return "", err
-	}
-	if out.Error != nil && out.Error.Message != "" {
-		return "", fmt.Errorf("OpenAI error: %s", out.Error.Message)
-	}
-	if len(out.Choices) == 0 {
-		return "", fmt.Errorf("OpenAI returned no choices")
-	}
-	return out.Choices[0].Message.Content, nil
+	return raw, resp.StatusCode, nil
 }
 
 // Ping verifies the API key with a minimal completion.

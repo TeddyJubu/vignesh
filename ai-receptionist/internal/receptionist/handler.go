@@ -7,11 +7,14 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"time"
 
 	"ai-receptionist/internal/ai"
 	"ai-receptionist/internal/config"
 	"ai-receptionist/internal/lead"
+	"ai-receptionist/internal/ops"
 	"ai-receptionist/internal/store"
+	"ai-receptionist/internal/webhook"
 	"ai-receptionist/internal/whatsapp"
 
 	"go.mau.fi/whatsmeow/types"
@@ -21,25 +24,30 @@ import (
 const historyLimit = 10
 
 type Handler struct {
-	cfg       *config.Config
-	store     *store.DB
-	ai        *ai.Client
-	wa        *whatsapp.Client
-	promptTpl string
+	cfg          *config.Config
+	store        *store.DB
+	ai           *ai.Client
+	wa           *whatsapp.Client
+	promptTpl    string
+	styleExtra   string
+	debouncer    *Debouncer
 
-	mu       sync.Mutex
-	chatMu   map[string]*sync.Mutex
+	mu     sync.Mutex
+	chatMu map[string]*sync.Mutex
 }
 
-func New(cfg *config.Config, db *store.DB, aiClient *ai.Client, wa *whatsapp.Client, promptTpl string) *Handler {
-	return &Handler{
-		cfg:       cfg,
-		store:     db,
-		ai:        aiClient,
-		wa:        wa,
-		promptTpl: promptTpl,
-		chatMu:    make(map[string]*sync.Mutex),
+func New(cfg *config.Config, db *store.DB, aiClient *ai.Client, wa *whatsapp.Client, promptTpl, styleExtra string) *Handler {
+	h := &Handler{
+		cfg:        cfg,
+		store:      db,
+		ai:         aiClient,
+		wa:         wa,
+		promptTpl:  promptTpl,
+		styleExtra: styleExtra,
+		chatMu:     make(map[string]*sync.Mutex),
 	}
+	h.debouncer = NewDebouncer(cfg.DebounceSeconds, h.handleDebounced)
+	return h
 }
 
 func (h *Handler) HandleMessage(ctx context.Context, v *events.Message) {
@@ -49,12 +57,14 @@ func (h *Handler) HandleMessage(ctx context.Context, v *events.Message) {
 		ownJID = *own
 	}
 	in, ok := whatsapp.ShouldProcessInbound(v, whatsapp.InboundFilter{
-		OwnerPhone:    h.cfg.OwnerNumber,
-		ReplyToGroups: h.cfg.ReplyToGroups,
-		ReplyToSelf:   h.cfg.SelfChatEnabled(),
-		OwnJID:        ownJID,
-		Sent:          h.wa.Sent,
-		Normalize:     config.NormalizePhone,
+		OwnerPhone:     h.cfg.OwnerNumber,
+		ReplyToGroups:  h.cfg.ReplyToGroups,
+		ReplyToSelf:    h.cfg.SelfChatEnabled(),
+		OwnJID:         ownJID,
+		Sent:           h.wa.Sent,
+		Normalize:      config.NormalizePhone,
+		AllowedNumbers: h.cfg.AllowedNumbers,
+		BlockedNumbers: h.cfg.BlockedNumbers,
 	})
 	if !ok {
 		if os.Getenv("DEBUG_INBOUND") == "1" && v != nil {
@@ -65,12 +75,45 @@ func (h *Handler) HandleMessage(ctx context.Context, v *events.Message) {
 	}
 	fmt.Printf("inbound conv=%s chat=%s text=%q\n", in.ConvID, v.Info.Chat, in.Text)
 
+	if IsPauseKeyword(in.Text) {
+		if canPauseSender(in, h.cfg.OwnerNumber) {
+			h.handlePause(ctx, v, in)
+		}
+		return
+	}
+
+	h.debouncer.Enqueue(ctx, v, in)
+}
+
+func (h *Handler) handlePause(ctx context.Context, v *events.Message, in whatsapp.InboundContext) {
 	lock := h.chatLock(in.ConvID)
 	lock.Lock()
 	defer lock.Unlock()
 
-	if err := h.process(ctx, v, in); err != nil {
+	h.debouncer.Cancel(in.ConvID)
+
+	until := time.Now().Add(time.Duration(h.cfg.PauseHours) * time.Hour)
+	if _, err := h.store.GetOrCreateContact(in.ConvID); err != nil {
+		fmt.Fprintln(os.Stderr, "pause:", err)
+		return
+	}
+	if err := h.store.PauseContact(in.ConvID, until); err != nil {
+		fmt.Fprintln(os.Stderr, "pause:", err)
+		return
+	}
+	ack := "Got it — I'll stay quiet in this chat until you message again or the pause expires."
+	_ = whatsapp.SendText(ctx, h.wa, v.Info.Chat, ack)
+	fmt.Printf("paused conv=%s until %s\n", in.ConvID, until.Format(time.RFC3339))
+}
+
+func (h *Handler) handleDebounced(ctx context.Context, v *events.Message, in whatsapp.InboundContext, combinedText string) {
+	lock := h.chatLock(in.ConvID)
+	lock.Lock()
+	defer lock.Unlock()
+
+	if err := h.process(ctx, v, in, combinedText); err != nil {
 		fmt.Fprintln(os.Stderr, "receptionist:", in.ConvID, err)
+		ops.AppendErrorLog("receptionist/"+in.ConvID, err)
 		h.sendFailureReply(ctx, v, err)
 	}
 }
@@ -94,13 +137,39 @@ func (h *Handler) chatLock(phone string) *sync.Mutex {
 	return m
 }
 
-func (h *Handler) process(ctx context.Context, v *events.Message, in whatsapp.InboundContext) error {
+func (h *Handler) process(ctx context.Context, v *events.Message, in whatsapp.InboundContext, text string) error {
 	convID := in.ConvID
-	text := in.Text
 
+	_ = h.store.ClearPauseIfExpired(convID, time.Now())
 	contact, err := h.store.GetOrCreateContact(convID)
 	if err != nil {
 		return err
+	}
+	if contact.IsPaused(time.Now()) {
+		if err := h.store.InsertMessage(convID, "user", text); err != nil {
+			return err
+		}
+		fmt.Printf("skip AI (paused) conv=%s\n", convID)
+		return nil
+	}
+
+	if h.cfg.QuietHours.InQuietHours(time.Now()) {
+		if err := h.store.InsertMessage(convID, "user", text); err != nil {
+			return err
+		}
+		reply := h.cfg.QuietHours.AutoReplyMessage()
+		sendQuietReply := reply != "" && shouldSendQuietHoursReply(h.cfg.QuietHours, contact.LastBotReplyAt, time.Now())
+		if sendQuietReply {
+			if err := h.store.InsertMessage(convID, "assistant", reply); err != nil {
+				return err
+			}
+			if err := whatsapp.SendText(ctx, h.wa, v.Info.Chat, reply); err != nil {
+				return err
+			}
+			_ = h.store.TouchLastBotReply(convID)
+		}
+		fmt.Printf("quiet hours skip AI conv=%s\n", convID)
+		return nil
 	}
 
 	if err := h.store.InsertMessage(convID, "user", text); err != nil {
@@ -156,15 +225,9 @@ func (h *Handler) process(ctx context.Context, v *events.Message, in whatsapp.In
 		summary = parsed.Summary
 	}
 
-	status := contact.Status
+	status := mergeLeadStatus(contact.Status, qualified, h.cfg.LeadTrackingEnabled())
 	if h.cfg.LeadTrackingEnabled() {
 		leadData = leadDataOut
-		if status == "new" {
-			status = "collecting"
-		}
-		if qualified {
-			status = "qualified"
-		}
 		name := lead.DenormalizedName(leadData)
 		leadJSON, _ := json.Marshal(leadData)
 		if err := h.store.UpdateContact(convID, name, string(leadJSON), status); err != nil {
@@ -176,27 +239,87 @@ func (h *Handler) process(ctx context.Context, v *events.Message, in whatsapp.In
 		return err
 	}
 
+	contact, err = h.store.GetContact(convID)
+	if err != nil {
+		return err
+	}
+	if contact.IsPaused(time.Now()) {
+		fmt.Printf("skip send (paused after AI) conv=%s\n", convID)
+		return nil
+	}
+
+	whatsapp.SendTyping(ctx, h.wa, v.Info.Chat, true)
 	if err := whatsapp.SendText(ctx, h.wa, v.Info.Chat, reply); err != nil {
 		return fmt.Errorf("send reply: %w", err)
 	}
+	_ = h.store.TouchLastBotReply(convID)
 
-	if h.cfg.OwnerAlertsEnabled() && qualified && contact.Status != "notified" {
-		if strings.TrimSpace(summary) == "" {
-			summary = "Qualified lead via WhatsApp receptionist."
-		}
-		alert := lead.AdminSummary(h.cfg.BusinessName, in.Sender, leadData, summary)
-		ownerJID := whatsapp.PhoneToJID(h.cfg.OwnerNumber)
-		if err := whatsapp.SendText(ctx, h.wa, ownerJID, alert); err != nil {
-			return fmt.Errorf("owner alert: %w", err)
-		}
-		name := lead.DenormalizedName(leadData)
-		leadJSON, _ := json.Marshal(leadData)
-		if err := h.store.UpdateContact(convID, name, string(leadJSON), "notified"); err != nil {
+	if h.cfg.LeadTrackingEnabled() && qualified {
+		if err := h.notifyQualifiedLead(ctx, convID, in, leadData, summary, contact); err != nil {
 			return err
 		}
-		fmt.Println("Owner alerted for lead:", in.Sender)
 	}
 
+	return nil
+}
+
+// mergeLeadStatus updates funnel status without downgrading notified leads.
+func mergeLeadStatus(current string, qualified, tracking bool) string {
+	if !tracking {
+		return current
+	}
+	if current == "notified" {
+		return "notified"
+	}
+	if current == "new" {
+		current = "collecting"
+	}
+	if qualified {
+		return "qualified"
+	}
+	return current
+}
+
+func shouldSendQuietHoursReply(q config.QuietHours, lastBot *time.Time, now time.Time) bool {
+	if lastBot == nil {
+		return true
+	}
+	// One auto-reply per quiet-hours window; a reply sent during quiet hours suppresses repeats.
+	return !q.InQuietHours(*lastBot)
+}
+
+func (h *Handler) notifyQualifiedLead(ctx context.Context, convID string, in whatsapp.InboundContext, leadData map[string]string, summary string, contact *store.Contact) error {
+	if contact.Status == "notified" {
+		return nil
+	}
+	if strings.TrimSpace(summary) == "" {
+		summary = "Qualified lead via WhatsApp receptionist."
+	}
+	if h.cfg.WebhookURL != "" && contact.WebhookSentAt == nil {
+		if err := webhook.NotifyQualify(ctx, h.cfg.WebhookURL, h.cfg.WebhookSecret,
+			h.cfg.BusinessName, convID, in.Sender, leadData, summary); err != nil {
+			ops.AppendErrorLog("webhook", err)
+			fmt.Fprintln(os.Stderr, "webhook:", err)
+		} else {
+			_ = h.store.MarkWebhookSent(convID)
+		}
+	}
+	if !h.cfg.OwnerAlertsEnabled() {
+		name := lead.DenormalizedName(leadData)
+		leadJSON, _ := json.Marshal(leadData)
+		return h.store.UpdateContact(convID, name, string(leadJSON), "notified")
+	}
+	alert := lead.AdminSummary(h.cfg.BusinessName, in.Sender, leadData, summary)
+	ownerJID := whatsapp.PhoneToJID(h.cfg.OwnerNumber)
+	if err := whatsapp.SendText(ctx, h.wa, ownerJID, alert); err != nil {
+		return fmt.Errorf("owner alert: %w", err)
+	}
+	name := lead.DenormalizedName(leadData)
+	leadJSON, _ := json.Marshal(leadData)
+	if err := h.store.UpdateContact(convID, name, string(leadJSON), "notified"); err != nil {
+		return err
+	}
+	fmt.Println("Owner alerted for lead:", in.Sender)
 	return nil
 }
 
@@ -208,6 +331,11 @@ func (h *Handler) buildSystemPrompt(leadData map[string]string, in whatsapp.Inbo
 
 	var b strings.Builder
 	b.WriteString(p)
+	if h.styleExtra != "" {
+		b.WriteString("\n\n## Style examples\n")
+		b.WriteString(h.styleExtra)
+		b.WriteString("\n")
+	}
 	if in.IsGroup {
 		b.WriteString("\n\n## Chat context\nThis message is from a WhatsApp group. Reply in the thread; keep messages short. Sender: ")
 		b.WriteString(in.SenderName)

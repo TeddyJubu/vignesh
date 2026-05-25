@@ -4,3 +4,4 @@ whatsmeow.db
 database.db
 ai-receptionist
 .DS_Store
+errors.log

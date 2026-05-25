@@ -4,6 +4,10 @@ CREATE TABLE IF NOT EXISTS contacts (
     name TEXT NOT NULL DEFAULT '',
     lead_data TEXT NOT NULL DEFAULT '{}',
     status TEXT NOT NULL DEFAULT 'new',
+    paused_until TEXT,
+    language TEXT NOT NULL DEFAULT '',
+    lead_score TEXT NOT NULL DEFAULT '',
+    last_bot_reply_at TEXT,
     created_at DATETIME NOT NULL DEFAULT (datetime('now')),
     last_message_at DATETIME NOT NULL DEFAULT (datetime('now'))
 );

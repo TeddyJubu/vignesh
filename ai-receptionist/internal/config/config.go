@@ -7,6 +7,14 @@ import (
 	"strings"
 )
 
+type QuietHours struct {
+	Enabled bool   `json:"enabled"`
+	TZ      string `json:"tz"`
+	Start   string `json:"start"` // HH:MM
+	End     string `json:"end"`   // HH:MM
+	Message string `json:"message,omitempty"`
+}
+
 type Config struct {
 	BusinessName        string `json:"business_name"`
 	OwnerNumber         string `json:"owner_number"`
@@ -23,6 +31,14 @@ type Config struct {
 	EnableLeadTracking *bool `json:"enable_lead_tracking,omitempty"`
 	// EnableOwnerAlerts sends qualified-lead summary to owner_number (receptionist default: true).
 	EnableOwnerAlerts *bool `json:"enable_owner_alerts,omitempty"`
+
+	AllowedNumbers  []string   `json:"allowed_numbers,omitempty"`
+	BlockedNumbers  []string   `json:"blocked_numbers,omitempty"`
+	QuietHours      QuietHours `json:"quiet_hours"`
+	DebounceSeconds int        `json:"debounce_seconds"`
+	WebhookURL      string     `json:"webhook_url"`
+	WebhookSecret   string     `json:"webhook_secret"`
+	PauseHours      int        `json:"pause_hours,omitempty"` // human takeover TTL (default 24)
 }
 
 func Load(path string) (*Config, error) {
@@ -44,6 +60,17 @@ func Load(path string) (*Config, error) {
 		c.Model = "gpt-4o-mini"
 	}
 	c.OwnerNumber = NormalizePhone(c.OwnerNumber)
+	c.AllowedNumbers = normalizePhoneList(c.AllowedNumbers)
+	c.BlockedNumbers = normalizePhoneList(c.BlockedNumbers)
+	if c.DebounceSeconds <= 0 {
+		c.DebounceSeconds = 3
+	}
+	if c.PauseHours <= 0 {
+		c.PauseHours = 24
+	}
+	if strings.TrimSpace(c.QuietHours.TZ) == "" {
+		c.QuietHours.TZ = "Asia/Dhaka"
+	}
 	c.applyModeDefaults()
 	if c.ReplyToSelfChat == nil {
 		t := true
@@ -94,6 +121,29 @@ func (c *Config) OwnerAlertsEnabled() bool {
 	return c.EnableOwnerAlerts != nil && *c.EnableOwnerAlerts
 }
 
+func (c *Config) IsAllowed(sender string) bool {
+	if len(c.AllowedNumbers) == 0 {
+		return true
+	}
+	sender = NormalizePhone(sender)
+	for _, n := range c.AllowedNumbers {
+		if n == sender {
+			return true
+		}
+	}
+	return false
+}
+
+func (c *Config) IsBlocked(sender string) bool {
+	sender = NormalizePhone(sender)
+	for _, n := range c.BlockedNumbers {
+		if n == sender {
+			return true
+		}
+	}
+	return false
+}
+
 // NormalizePhone keeps digits only (country code, no +).
 func NormalizePhone(s string) string {
 	var b strings.Builder
@@ -103,4 +153,17 @@ func NormalizePhone(s string) string {
 		}
 	}
 	return b.String()
+}
+
+func normalizePhoneList(list []string) []string {
+	if len(list) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(list))
+	for _, s := range list {
+		if n := NormalizePhone(s); n != "" {
+			out = append(out, n)
+		}
+	}
+	return out
 }

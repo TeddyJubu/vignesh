@@ -5,6 +5,7 @@ import (
 	_ "embed"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	_ "github.com/mattn/go-sqlite3"
@@ -14,14 +15,20 @@ import (
 var schemaSQL string
 
 type Contact struct {
-	ID            int64
-	Phone         string
-	Name          string
-	LeadData      map[string]string
-	LeadDataRaw   string
-	Status        string
-	CreatedAt     time.Time
-	LastMessageAt time.Time
+	ID                int64
+	Phone             string
+	Name              string
+	LeadData          map[string]string
+	LeadDataRaw       string
+	Status            string
+	StatusBeforePause string
+	PausedUntil       *time.Time
+	Language          string
+	LeadScore         string
+	LastBotReplyAt    *time.Time
+	WebhookSentAt     *time.Time
+	CreatedAt         time.Time
+	LastMessageAt     time.Time
 }
 
 type Message struct {
@@ -45,6 +52,10 @@ func Open(path string) (*DB, error) {
 		_ = db.Close()
 		return nil, fmt.Errorf("migrate: %w", err)
 	}
+	if err := migrate(db); err != nil {
+		_ = db.Close()
+		return nil, err
+	}
 	return &DB{db: db}, nil
 }
 
@@ -67,19 +78,20 @@ func (d *DB) GetOrCreateContact(phone string) (*Contact, error) {
 	return d.GetContact(phone)
 }
 
+const contactSelect = `SELECT id, phone, name, lead_data, status,
+	COALESCE(status_before_pause, ''), COALESCE(paused_until, ''), COALESCE(language, ''), COALESCE(lead_score, ''),
+	COALESCE(last_bot_reply_at, ''), COALESCE(webhook_sent_at, ''), created_at, last_message_at FROM contacts WHERE phone = ?`
+
 func (d *DB) GetContact(phone string) (*Contact, error) {
-	row := d.db.QueryRow(
-		`SELECT id, phone, name, lead_data, status, created_at, last_message_at FROM contacts WHERE phone = ?`,
-		phone,
-	)
+	row := d.db.QueryRow(contactSelect, phone)
 	return scanContact(row)
 }
 
 func scanContact(row *sql.Row) (*Contact, error) {
 	var c Contact
-	var leadRaw string
-	var created, last string
-	if err := row.Scan(&c.ID, &c.Phone, &c.Name, &leadRaw, &c.Status, &created, &last); err != nil {
+	var leadRaw, pausedRaw, lastBotRaw, webhookRaw, created, last string
+	if err := row.Scan(&c.ID, &c.Phone, &c.Name, &leadRaw, &c.Status,
+		&c.StatusBeforePause, &pausedRaw, &c.Language, &c.LeadScore, &lastBotRaw, &webhookRaw, &created, &last); err != nil {
 		return nil, err
 	}
 	c.LeadDataRaw = leadRaw
@@ -89,6 +101,21 @@ func scanContact(row *sql.Row) (*Contact, error) {
 	}
 	if c.LeadData == nil {
 		c.LeadData = map[string]string{}
+	}
+	if pausedRaw != "" {
+		if t, err := parseSQLiteTime(pausedRaw); err == nil {
+			c.PausedUntil = &t
+		}
+	}
+	if lastBotRaw != "" {
+		if t, err := parseSQLiteTime(lastBotRaw); err == nil {
+			c.LastBotReplyAt = &t
+		}
+	}
+	if webhookRaw != "" {
+		if t, err := parseSQLiteTime(webhookRaw); err == nil {
+			c.WebhookSentAt = &t
+		}
 	}
 	var err error
 	c.CreatedAt, err = parseSQLiteTime(created)
@@ -116,10 +143,78 @@ func parseSQLiteTime(s string) (time.Time, error) {
 	return time.Time{}, fmt.Errorf("parse time %q", s)
 }
 
+// IsPaused returns true when human takeover is active for this contact.
+func (c *Contact) IsPaused(now time.Time) bool {
+	if c.Status != "paused" {
+		return false
+	}
+	if c.PausedUntil == nil {
+		return true
+	}
+	return now.Before(*c.PausedUntil)
+}
+
+func (d *DB) PauseContact(phone string, until time.Time) error {
+	c, err := d.GetContact(phone)
+	if err != nil {
+		return err
+	}
+	before := c.Status
+	if before == "paused" {
+		before = c.StatusBeforePause
+	}
+	if before == "" {
+		before = "collecting"
+	}
+	_, err = d.db.Exec(
+		`UPDATE contacts SET status = 'paused', status_before_pause = ?, paused_until = ?, last_message_at = datetime('now') WHERE phone = ?`,
+		before, until.UTC().Format(time.RFC3339), phone,
+	)
+	return err
+}
+
+func (d *DB) ClearPauseIfExpired(phone string, now time.Time) error {
+	c, err := d.GetContact(phone)
+	if err != nil {
+		return err
+	}
+	if c.Status != "paused" {
+		return nil
+	}
+	if c.PausedUntil != nil && now.After(*c.PausedUntil) {
+		restore := strings.TrimSpace(c.StatusBeforePause)
+		if restore == "" || restore == "paused" {
+			restore = "collecting"
+		}
+		_, err = d.db.Exec(
+			`UPDATE contacts SET status = ?, paused_until = NULL, status_before_pause = NULL WHERE phone = ? AND status = 'paused'`,
+			restore, phone,
+		)
+		return err
+	}
+	return nil
+}
+
 func (d *DB) UpdateContact(phone, name, leadJSON, status string) error {
 	_, err := d.db.Exec(
 		`UPDATE contacts SET name = ?, lead_data = ?, status = ?, last_message_at = datetime('now') WHERE phone = ?`,
 		name, leadJSON, status, phone,
+	)
+	return err
+}
+
+func (d *DB) TouchLastBotReply(phone string) error {
+	_, err := d.db.Exec(
+		`UPDATE contacts SET last_bot_reply_at = datetime('now') WHERE phone = ?`,
+		phone,
+	)
+	return err
+}
+
+func (d *DB) MarkWebhookSent(phone string) error {
+	_, err := d.db.Exec(
+		`UPDATE contacts SET webhook_sent_at = datetime('now') WHERE phone = ?`,
+		phone,
 	)
 	return err
 }
@@ -159,7 +254,6 @@ func (d *DB) RecentMessages(phone string, limit int) ([]Message, error) {
 		}
 		out = append(out, m)
 	}
-	// reverse to chronological
 	for i, j := 0, len(out)-1; i < j; i, j = i+1, j-1 {
 		out[i], out[j] = out[j], out[i]
 	}
