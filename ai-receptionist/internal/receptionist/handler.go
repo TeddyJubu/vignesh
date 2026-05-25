@@ -14,6 +14,7 @@ import (
 	"ai-receptionist/internal/store"
 	"ai-receptionist/internal/whatsapp"
 
+	"go.mau.fi/whatsmeow/types"
 	"go.mau.fi/whatsmeow/types/events"
 )
 
@@ -42,14 +43,27 @@ func New(cfg *config.Config, db *store.DB, aiClient *ai.Client, wa *whatsapp.Cli
 }
 
 func (h *Handler) HandleMessage(ctx context.Context, v *events.Message) {
+	own := h.wa.WM.Store.ID
+	var ownJID types.JID
+	if own != nil {
+		ownJID = *own
+	}
 	in, ok := whatsapp.ShouldProcessInbound(v, whatsapp.InboundFilter{
 		OwnerPhone:    h.cfg.OwnerNumber,
 		ReplyToGroups: h.cfg.ReplyToGroups,
+		ReplyToSelf:   h.cfg.SelfChatEnabled(),
+		OwnJID:        ownJID,
+		Sent:          h.wa.Sent,
 		Normalize:     config.NormalizePhone,
 	})
 	if !ok {
+		if os.Getenv("DEBUG_INBOUND") == "1" && v != nil {
+			fmt.Fprintf(os.Stderr, "skip inbound chat=%s sender=%s fromMe=%v\n",
+				v.Info.Chat, v.Info.Sender, v.Info.IsFromMe)
+		}
 		return
 	}
+	fmt.Printf("inbound conv=%s chat=%s text=%q\n", in.ConvID, v.Info.Chat, in.Text)
 
 	lock := h.chatLock(in.ConvID)
 	lock.Lock()
@@ -57,7 +71,16 @@ func (h *Handler) HandleMessage(ctx context.Context, v *events.Message) {
 
 	if err := h.process(ctx, v, in); err != nil {
 		fmt.Fprintln(os.Stderr, "receptionist:", in.ConvID, err)
+		h.sendFailureReply(ctx, v, err)
 	}
+}
+
+func (h *Handler) sendFailureReply(ctx context.Context, v *events.Message, err error) {
+	msg := "I couldn't reach the AI right now — check the bot terminal (OPENAI_API_KEY or quota)."
+	if strings.Contains(err.Error(), "403") || strings.Contains(strings.ToLower(err.Error()), "limit") {
+		msg = "OpenAI quota or billing issue — check platform.openai.com and your API key."
+	}
+	_ = whatsapp.SendText(ctx, h.wa, v.Info.Chat, msg)
 }
 
 func (h *Handler) chatLock(phone string) *sync.Mutex {
@@ -153,7 +176,7 @@ func (h *Handler) process(ctx context.Context, v *events.Message, in whatsapp.In
 		return err
 	}
 
-	if err := whatsapp.SendText(ctx, h.wa.WM, v.Info.Chat, reply); err != nil {
+	if err := whatsapp.SendText(ctx, h.wa, v.Info.Chat, reply); err != nil {
 		return fmt.Errorf("send reply: %w", err)
 	}
 
@@ -163,7 +186,7 @@ func (h *Handler) process(ctx context.Context, v *events.Message, in whatsapp.In
 		}
 		alert := lead.AdminSummary(h.cfg.BusinessName, in.Sender, leadData, summary)
 		ownerJID := whatsapp.PhoneToJID(h.cfg.OwnerNumber)
-		if err := whatsapp.SendText(ctx, h.wa.WM, ownerJID, alert); err != nil {
+		if err := whatsapp.SendText(ctx, h.wa, ownerJID, alert); err != nil {
 			return fmt.Errorf("owner alert: %w", err)
 		}
 		name := lead.DenormalizedName(leadData)

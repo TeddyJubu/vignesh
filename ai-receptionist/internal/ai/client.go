@@ -8,40 +8,30 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 )
 
-const openRouterURL = "https://openrouter.ai/api/v1/chat/completions"
+const openAIURL = "https://api.openai.com/v1/chat/completions"
 
 type Client struct {
-	provider string
-	model    string
-	apiKey   string
-	http     *http.Client
+	model  string
+	apiKey string
+	http   *http.Client
 }
 
-func NewClient(provider, model string) (*Client, error) {
-	key := ""
-	switch provider {
-	case "openrouter", "":
-		key = os.Getenv("OPENROUTER_API_KEY")
-		if key == "" {
-			return nil, fmt.Errorf("OPENROUTER_API_KEY is not set")
-		}
-		provider = "openrouter"
-	case "openai":
-		key = os.Getenv("OPENAI_API_KEY")
-		if key == "" {
-			return nil, fmt.Errorf("OPENAI_API_KEY is not set")
-		}
-	default:
-		return nil, fmt.Errorf("unsupported ai_provider %q", provider)
+func NewClient(model string) (*Client, error) {
+	key := os.Getenv("OPENAI_API_KEY")
+	if key == "" {
+		return nil, fmt.Errorf("OPENAI_API_KEY is not set")
+	}
+	if strings.TrimSpace(model) == "" {
+		model = "gpt-4o-mini"
 	}
 	return &Client{
-		provider: provider,
-		model:    model,
-		apiKey:   key,
-		http:     &http.Client{Timeout: 90 * time.Second},
+		model:  model,
+		apiKey: key,
+		http:   &http.Client{Timeout: 90 * time.Second},
 	}, nil
 }
 
@@ -81,21 +71,12 @@ func (c *Client) Complete(ctx context.Context, messages []ChatMessage, jsonMode 
 		return "", err
 	}
 
-	url := openRouterURL
-	if c.provider == "openai" {
-		url = "https://api.openai.com/v1/chat/completions"
-	}
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, openAIURL, bytes.NewReader(body))
 	if err != nil {
 		return "", err
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+c.apiKey)
-	if c.provider == "openrouter" {
-		req.Header.Set("HTTP-Referer", "https://github.com/ai-receptionist")
-		req.Header.Set("X-Title", "AI Receptionist")
-	}
 
 	resp, err := c.http.Do(req)
 	if err != nil {
@@ -108,7 +89,7 @@ func (c *Client) Complete(ctx context.Context, messages []ChatMessage, jsonMode 
 		return "", err
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return "", fmt.Errorf("AI API HTTP %d: %s", resp.StatusCode, string(raw))
+		return "", fmt.Errorf("OpenAI HTTP %d: %s", resp.StatusCode, string(raw))
 	}
 
 	var out chatResponse
@@ -116,10 +97,18 @@ func (c *Client) Complete(ctx context.Context, messages []ChatMessage, jsonMode 
 		return "", err
 	}
 	if out.Error != nil && out.Error.Message != "" {
-		return "", fmt.Errorf("AI API error: %s", out.Error.Message)
+		return "", fmt.Errorf("OpenAI error: %s", out.Error.Message)
 	}
 	if len(out.Choices) == 0 {
-		return "", fmt.Errorf("AI API returned no choices")
+		return "", fmt.Errorf("OpenAI returned no choices")
 	}
 	return out.Choices[0].Message.Content, nil
+}
+
+// Ping verifies the API key with a minimal completion.
+func (c *Client) Ping(ctx context.Context) error {
+	_, err := c.Complete(ctx, []ChatMessage{
+		{Role: "user", Content: "ping"},
+	}, false)
+	return err
 }

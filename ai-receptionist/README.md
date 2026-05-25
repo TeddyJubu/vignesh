@@ -1,6 +1,6 @@
 # WhatsApp AI Receptionist
 
-Standalone Go app that connects to WhatsApp via [whatsmeow](https://github.com/tulir/whatsmeow), runs an AI receptionist (OpenRouter), stores conversation memory in SQLite, qualifies leads, and alerts the business owner on WhatsApp.
+Standalone Go app that connects to WhatsApp via [whatsmeow](https://github.com/tulir/whatsmeow), runs an AI receptionist (OpenAI), stores conversation memory in SQLite, qualifies leads, and alerts the business owner on WhatsApp.
 
 ## Version control
 
@@ -18,7 +18,7 @@ Never commit `.env`, `*.db`, or the built `ai-receptionist` binary (see `.gitign
 
 - Go 1.25+
 - SQLite (via `github.com/mattn/go-sqlite3`)
-- OpenRouter API key
+- OpenAI API key
 - A phone number for WhatsApp Business or personal (Linked Devices)
 
 ## Quick start
@@ -27,7 +27,7 @@ Never commit `.env`, `*.db`, or the built `ai-receptionist` binary (see `.gitign
 cd ai-receptionist
 cp .env.example .env
 # Edit config.json — set owner_number (digits + country code, no +)
-export OPENROUTER_API_KEY=sk-or-v1-...
+export OPENAI_API_KEY=sk-...
 
 go run .
 ```
@@ -42,7 +42,7 @@ Send a **private text DM** to the linked number (not the owner number in config)
 |------|---------|
 | `config.json` | Business name, owner phone, AI model |
 | `prompt.txt` | Receptionist system prompt (editable without rebuild) |
-| `.env` | `OPENROUTER_API_KEY` (optional path overrides) |
+| `.env` | `OPENAI_API_KEY` (optional; can export in shell instead) |
 
 Environment overrides:
 
@@ -89,6 +89,22 @@ sudo journalctl -u ai-receptionist -f
 
 **Backup `whatsmeow.db`** — losing it requires QR re-link. Backup `database.db` for lead history.
 
+## Troubleshooting: no reply
+
+1. **Watch the terminal** when you send a message. You should see:
+   ```txt
+   inbound conv=self:8801521207499 chat=... text="hi"
+   ```
+   If you see `skip inbound` with `DEBUG_INBOUND=1`, the filter blocked the message.
+
+2. **OpenAI errors** — if you see `OpenAI HTTP 401/403/429`, WhatsApp is working but AI is not. Check [platform.openai.com](https://platform.openai.com) (billing, key, rate limits).
+
+3. **Startup check** — on launch you should see `AI API OK`. If you see `WARNING: AI API check failed`, fix the key before testing WhatsApp.
+
+4. **`owner_number`** — use your full WhatsApp number (e.g. `8801521207499`), not a placeholder. On link, the terminal prints `Linked account JID: ...`.
+
+5. **Self-chat test** — use **Message yourself** in WhatsApp, not a random DM to your number.
+
 ## Verification checklist
 
 1. Cold start → QR pairing succeeds
@@ -122,7 +138,7 @@ To auto-reply to **all private DMs** in your voice (not the agency receptionist 
    ```bash
    export PROMPT_PATH=prompt-personal.txt
    ```
-3. Run as usual (`export OPENROUTER_API_KEY=...` then `go run .`).
+3. Run as usual (`export OPENAI_API_KEY=...` then `go run .`).
 
 **What changes in personal mode**
 
@@ -130,7 +146,15 @@ To auto-reply to **all private DMs** in your voice (not the agency receptionist 
 |---------|----------|
 | `mode: personal` | Plain-text replies (no lead JSON); no owner “new lead” alerts |
 | `reply_to_groups: true` | Also replies in group chats (sender prefixed in context) |
-| `owner_number` | Still skipped — messages *from* your own number are ignored (avoids loops) |
+| `reply_to_self_chat: true` | Replies in **Message yourself** (good for testing; bot ignores its own sends) |
+| `owner_number` | Skipped in normal DMs; still works in self-chat when `reply_to_self_chat` is on |
+
+### Test in "Message yourself"
+
+1. Set `owner_number` to your WhatsApp number (same as the linked account).
+2. Keep `"reply_to_self_chat": true` (default).
+3. Run the bot, open WhatsApp → **Message yourself**, send `hi`.
+4. You should get an AI reply in that thread (not in other chats you message from the same phone).
 
 **Limits**
 

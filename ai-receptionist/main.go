@@ -42,7 +42,7 @@ func main() {
 	}
 	promptTpl := string(promptBytes)
 
-	aiClient, err := ai.NewClient(cfg.AIProvider, cfg.Model)
+	aiClient, err := ai.NewClient(cfg.Model)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
@@ -81,6 +81,16 @@ func main() {
 		fmt.Println("Waiting for QR scan...")
 	} else {
 		fmt.Println("Session linked — listening for messages")
+		if id := waClient.WM.Store.ID; id != nil {
+			fmt.Println("Linked account JID:", id.String(), "(set owner_number to this phone digits if testing self-chat)")
+		}
+	}
+
+	if err := aiClient.Ping(ctx); err != nil {
+		fmt.Fprintln(os.Stderr, "WARNING: AI API check failed:", err)
+		fmt.Fprintln(os.Stderr, "WhatsApp will still connect but replies will fail until the key/quota is fixed.")
+	} else {
+		fmt.Println("AI API OK")
 	}
 
 	c := make(chan os.Signal, 1)

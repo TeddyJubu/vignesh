@@ -1,9 +1,9 @@
 {
   "business_name": "Teddy",
-  "owner_number": "8801XXXXXXXXX",
-  "ai_provider": "openrouter",
-  "model": "openai/gpt-4.1-mini",
+  "owner_number": "8801521207499",
+  "model": "gpt-4o-mini",
   "mode": "receptionist",
   "reply_to_groups": false,
+  "reply_to_self_chat": true,
   "business_description": "We build fast, conversion-focused websites and landing pages for small businesses and coaches. Typical projects: landing pages, full sites, redesigns. We qualify leads on budget, timeline, and scope before scheduling a call."
 }

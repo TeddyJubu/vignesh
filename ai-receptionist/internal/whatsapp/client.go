@@ -17,8 +17,9 @@ import (
 )
 
 type Client struct {
-	WM       *whatsmeow.Client
+	WM        *whatsmeow.Client
 	onMessage func(*events.Message)
+	Sent      *OutboundTracker
 }
 
 func New(ctx context.Context, dbPath string, onMessage func(*events.Message)) (*Client, error) {
@@ -33,7 +34,7 @@ func New(ctx context.Context, dbPath string, onMessage func(*events.Message)) (*
 	}
 	clientLog := waLog.Stdout("Client", "INFO", true)
 	wm := whatsmeow.NewClient(device, clientLog)
-	c := &Client{WM: wm, onMessage: onMessage}
+	c := &Client{WM: wm, onMessage: onMessage, Sent: NewOutboundTracker()}
 	wm.AddEventHandler(c.eventHandler)
 	return c, nil
 }

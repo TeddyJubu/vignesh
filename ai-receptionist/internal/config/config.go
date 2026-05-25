@@ -10,7 +10,6 @@ import (
 type Config struct {
 	BusinessName        string `json:"business_name"`
 	OwnerNumber         string `json:"owner_number"`
-	AIProvider          string `json:"ai_provider"`
 	Model               string `json:"model"`
 	BusinessDescription string `json:"business_description"`
 
@@ -18,6 +17,8 @@ type Config struct {
 	Mode string `json:"mode"`
 	// ReplyToGroups allows auto-reply in WhatsApp groups (default false).
 	ReplyToGroups bool `json:"reply_to_groups"`
+	// ReplyToSelfChat replies in WhatsApp "Message yourself" (notes-to-self). Default true.
+	ReplyToSelfChat *bool `json:"reply_to_self_chat,omitempty"`
 	// EnableLeadTracking runs qualification + lead_data (receptionist default: true).
 	EnableLeadTracking *bool `json:"enable_lead_tracking,omitempty"`
 	// EnableOwnerAlerts sends qualified-lead summary to owner_number (receptionist default: true).
@@ -40,14 +41,19 @@ func Load(path string) (*Config, error) {
 		return nil, fmt.Errorf("owner_number is required")
 	}
 	if strings.TrimSpace(c.Model) == "" {
-		c.Model = "openai/gpt-4.1-mini"
-	}
-	if strings.TrimSpace(c.AIProvider) == "" {
-		c.AIProvider = "openrouter"
+		c.Model = "gpt-4o-mini"
 	}
 	c.OwnerNumber = NormalizePhone(c.OwnerNumber)
 	c.applyModeDefaults()
+	if c.ReplyToSelfChat == nil {
+		t := true
+		c.ReplyToSelfChat = &t
+	}
 	return &c, nil
+}
+
+func (c *Config) SelfChatEnabled() bool {
+	return c.ReplyToSelfChat != nil && *c.ReplyToSelfChat
 }
 
 func (c *Config) applyModeDefaults() {

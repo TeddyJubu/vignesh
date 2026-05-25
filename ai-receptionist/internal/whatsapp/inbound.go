@@ -69,7 +69,31 @@ func IsBroadcast(chat types.JID) bool {
 type InboundFilter struct {
 	OwnerPhone    string
 	ReplyToGroups bool
+	ReplyToSelf   bool
+	OwnJID        types.JID
+	Sent          *OutboundTracker
 	Normalize     func(string) string
+}
+
+// IsSelfChat detects WhatsApp "Message yourself" (notes-to-self).
+// Chat and Sender are the same JID; own JID match is a fallback when linked as PN/LID mix.
+func IsSelfChat(v *events.Message, own types.JID) bool {
+	if v == nil || !IsPrivateChat(v.Info.Chat) {
+		return false
+	}
+	chat, sender := v.Info.Chat, v.Info.Sender
+	if chat.User != "" && chat.User == sender.User && chat.Server == sender.Server {
+		return true
+	}
+	if !own.IsEmpty() {
+		if chat.User == own.User && chat.Server == own.Server {
+			return true
+		}
+		if sender.User == own.User && sender.Server == own.Server && v.Info.IsFromMe {
+			return true
+		}
+	}
+	return false
 }
 
 // InboundContext is what the handler needs after filtering.
@@ -82,9 +106,21 @@ type InboundContext struct {
 }
 
 func ShouldProcessInbound(v *events.Message, f InboundFilter) (ctx InboundContext, ok bool) {
-	if v == nil || v.Info.IsFromMe {
+	if v == nil {
 		return InboundContext{}, false
 	}
+
+	selfChat := IsSelfChat(v, f.OwnJID)
+
+	if v.Info.IsFromMe {
+		if !f.ReplyToSelf || !selfChat {
+			return InboundContext{}, false
+		}
+		if f.Sent != nil && f.Sent.IsOurs(v.Info.ID) {
+			return InboundContext{}, false
+		}
+	}
+
 	if IsBroadcast(v.Info.Chat) {
 		return InboundContext{}, false
 	}
@@ -104,15 +140,20 @@ func ShouldProcessInbound(v *events.Message, f InboundFilter) (ctx InboundContex
 		norm = func(s string) string { return strings.TrimSpace(s) }
 	}
 	sender := norm(v.Info.Sender.User)
+	if sender == "" && selfChat {
+		sender = norm(f.OwnJID.User)
+	}
 	if sender == "" {
 		return InboundContext{}, false
 	}
-	if sender == f.OwnerPhone {
+	if sender == f.OwnerPhone && !selfChat {
 		return InboundContext{}, false
 	}
 
 	convID := sender
-	if isGroup {
+	if selfChat {
+		convID = "self:" + sender
+	} else if isGroup {
 		convID = v.Info.Chat.String()
 		text = fmt.Sprintf("[%s] %s", senderLabel(v), text)
 	}
