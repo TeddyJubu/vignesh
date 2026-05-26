@@ -139,6 +139,13 @@ Ensure `/opt/ai-receptionist/.env` on the server contains `AI_PROVIDER` plus the
 
 5. **Self-chat test** — use **Message yourself** in WhatsApp, not a random DM to your number.
 
+### Avoiding repeated QR rescans
+
+QR rescans happen when WhatsApp revokes the linked-device session or when `whatsmeow.db` is deleted.
+
+- **Keep `/opt/ai-receptionist/whatsmeow.db`** across deploys (it contains the linked-device session).
+- Only run `scripts/relink.sh` when you see a hard logout / deleted-device state; it now **backs up** `whatsmeow.db` before wiping it.
+
 ## Verification checklist
 
 1. Cold start → QR pairing succeeds

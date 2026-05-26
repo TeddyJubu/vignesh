@@ -140,8 +140,11 @@ func (c *Client) clearStaleSession(ctx context.Context) {
 	if c.WM.IsLoggedIn() {
 		return
 	}
-	fmt.Fprintln(os.Stderr, "clearing stale WhatsApp session for re-pairing...")
-	_ = c.WM.Logout(ctx)
+	// Important: do NOT call Logout() here.
+	// If the session is temporarily disconnected / in a bad state, calling Logout can revoke the
+	// linked-device session and force a QR re-pair. Instead, disconnect and let the pairing loop
+	// obtain a QR only when WhatsApp requires it.
+	fmt.Fprintln(os.Stderr, "WhatsApp session not logged in — attempting re-pair without revoking session...")
 	c.WM.Disconnect()
 	time.Sleep(500 * time.Millisecond)
 }
