@@ -65,7 +65,8 @@ func main() {
 	}
 	defer appStore.Close()
 
-	ctx := context.Background()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 	var handler *receptionist.Handler
 
 	waClient, err := whatsapp.New(ctx, whatsmeowDB, func(v *events.Message) {
@@ -98,15 +99,18 @@ func main() {
 	}
 
 	if err := aiClient.Ping(ctx); err != nil {
-		fmt.Fprintln(os.Stderr, "WARNING: AI API check failed:", err)
-		fmt.Fprintln(os.Stderr, "WhatsApp will still connect but replies will fail until the key/quota is fixed.")
+		fmt.Fprintln(os.Stderr, "WARNING: Ollama Cloud check failed:", err)
+		fmt.Fprintln(os.Stderr, "WhatsApp will still connect but replies will fail until OLLAMA_API_KEY is valid.")
 	} else {
-		fmt.Println("AI API OK")
+		fmt.Println("Ollama Cloud OK (model:", cfg.Model, ")")
 	}
+
+	go handler.RunNudgeLoop(ctx)
 
 	c := make(chan os.Signal, 1)
 	signal.Notify(c, os.Interrupt, syscall.SIGTERM)
 	<-c
+	cancel()
 	fmt.Println("Shutting down...")
 	waClient.Disconnect()
 }

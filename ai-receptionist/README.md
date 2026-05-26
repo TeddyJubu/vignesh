@@ -1,6 +1,6 @@
 # WhatsApp AI Receptionist
 
-Standalone Go app that connects to WhatsApp via [whatsmeow](https://github.com/tulir/whatsmeow), runs an AI receptionist (OpenAI), stores conversation memory in SQLite, qualifies leads, and alerts the business owner on WhatsApp.
+Standalone Go app that connects to WhatsApp via [whatsmeow](https://github.com/tulir/whatsmeow), runs an AI receptionist via [Ollama Cloud](https://ollama.com), stores conversation memory in SQLite, qualifies leads, and alerts the business owner on WhatsApp.
 
 ## Version control
 
@@ -18,7 +18,7 @@ Never commit `.env`, `*.db`, or the built `ai-receptionist` binary (see `.gitign
 
 - Go 1.25+
 - SQLite (via `github.com/mattn/go-sqlite3`)
-- OpenAI API key
+- Ollama Cloud API key ([ollama.com/settings/keys](https://ollama.com/settings/keys))
 - A phone number for WhatsApp Business or personal (Linked Devices)
 
 ## Quick start
@@ -27,7 +27,7 @@ Never commit `.env`, `*.db`, or the built `ai-receptionist` binary (see `.gitign
 cd ai-receptionist
 cp .env.example .env
 # Edit config.json — set owner_number (digits + country code, no +)
-export OPENAI_API_KEY=sk-...
+export OLLAMA_API_KEY=your_key_from_ollama_com
 
 go run .
 ```
@@ -42,7 +42,7 @@ Send a **private text DM** to the linked number (not the owner number in config)
 |------|---------|
 | `config.json` | Business name, owner phone, AI model |
 | `prompt.txt` | Receptionist system prompt (editable without rebuild) |
-| `.env` | `OPENAI_API_KEY` (optional; can export in shell instead) |
+| `.env` | `OLLAMA_API_KEY` (optional; can export in shell instead) |
 
 Environment overrides:
 
@@ -89,6 +89,16 @@ sudo journalctl -u ai-receptionist -f
 
 **Backup `whatsmeow.db`** — losing it requires QR re-link. Backup `database.db` for lead history.
 
+## Deploy to VPS
+
+```bash
+# From ai-receptionist/
+export SSH_HOST=vignesh   # optional, default vignesh
+./scripts/deploy.sh
+```
+
+Ensure `/opt/ai-receptionist/.env` on the server contains `OLLAMA_API_KEY`. Never commit `.env`.
+
 ## Troubleshooting: no reply
 
 1. **Watch the terminal** when you send a message. You should see:
@@ -97,9 +107,9 @@ sudo journalctl -u ai-receptionist -f
    ```
    If you see `skip inbound` with `DEBUG_INBOUND=1`, the filter blocked the message.
 
-2. **OpenAI errors** — if you see `OpenAI HTTP 401/403/429`, WhatsApp is working but AI is not. Check [platform.openai.com](https://platform.openai.com) (billing, key, rate limits).
+2. **Ollama errors** — if you see `Ollama HTTP 401/403/429`, WhatsApp is working but AI is not. Check [ollama.com/settings/keys](https://ollama.com/settings/keys) and that `config.json` model is a cloud model (e.g. `gemma4:31b-cloud`).
 
-3. **Startup check** — on launch you should see `AI API OK`. If you see `WARNING: AI API check failed`, fix the key before testing WhatsApp.
+3. **Startup check** — on launch you should see `Ollama Cloud OK`. If you see `WARNING: Ollama Cloud check failed`, fix `OLLAMA_API_KEY` before testing WhatsApp.
 
 4. **`owner_number`** — use your full WhatsApp number (e.g. `8801521207499`), not a placeholder. On link, the terminal prints `Linked account JID: ...`.
 
@@ -138,7 +148,7 @@ To auto-reply to **all private DMs** in your voice (not the agency receptionist 
    ```bash
    export PROMPT_PATH=prompt-personal.txt
    ```
-3. Run as usual (`export OPENAI_API_KEY=...` then `go run .`).
+3. Run as usual (`export OLLAMA_API_KEY=...` then `go run .`).
 
 **What changes in personal mode**
 

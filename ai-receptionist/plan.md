@@ -29,8 +29,8 @@ This is **not** a SaaS, CRM, or dashboard product in v1. The goal is a single Go
 | WhatsApp | QR linked-device login | Session in `whatsmeow.db` via `sqlstore` |
 | WhatsApp | Receive private text (+ captions) | Groups optional via `reply_to_groups` |
 | WhatsApp | Send replies | `SendMessage` with outbound ID tracking |
-| AI | OpenAI Chat Completions | `OPENAI_API_KEY`, default `gpt-4o-mini` |
-| AI | Startup health check | `AI API OK` / warning on launch |
+| AI | Ollama Cloud `/api/chat` | `OLLAMA_API_KEY`, default `gemma4:31b-cloud` |
+| AI | Startup health check | `Ollama Cloud OK` / warning on launch |
 | AI | Failure fallback message | User gets WhatsApp text when API fails |
 | Memory | SQLite `database.db` | `contacts` + `messages`, last 10 turns to model |
 | Receptionist | Structured JSON replies | `reply`, `lead_updates`, `qualified`, `summary` |
@@ -132,7 +132,7 @@ flowchart TB
 
 **Per-chat mutex:** One AI call at a time per `convID` (phone or `self:phone` or group JID).
 
-**Config surface:** `config.json` + env (`OPENAI_API_KEY`, `PROMPT_PATH`, `CONFIG_PATH`, `WHATSMEOW_DB`, `APP_DB`).
+**Config surface:** `config.json` + env (`OLLAMA_API_KEY`, `OLLAMA_API_URL`, `PROMPT_PATH`, `CONFIG_PATH`, `WHATSMEOW_DB`, `APP_DB`).
 
 ---
 
@@ -171,10 +171,10 @@ Also shipped from recommended order: **2.1 webhook on qualify**, **3.1 style-exa
 | # | Feature | Why | Implementation sketch |
 |---|---------|-----|-------------------------|
 | 2.1 | **Webhook on qualify** | ✅ | POST JSON to `webhook_url` on first qualify; HMAC `X-Webhook-Signature` |
-| 2.2 | **Google Sheets row** | No-code CRM | Optional: Sheets API append row (service account) — or defer to webhook only |
-| 2.3 | **Lead score** | Owner sees hot vs cold | Rule-based: budget + timeline + service → `hot` / `warm` / `cold` in alert text |
-| 2.4 | **Follow-up nudge** | Recover dropped leads | Goroutine + SQLite: if `collecting` and idle > 24h, one reminder message |
-| 2.5 | **Multi-language** | Bangladesh / international leads | Detect language from first user message; add line to system prompt |
+| 2.2 | **Google Sheets row** | Deferred | Use `webhook_url` → Make/n8n → Sheets |
+| 2.3 | **Lead score** | ✅ | Rule-based `hot`/`warm`/`cold` in owner alert + webhook JSON |
+| 2.4 | **Follow-up nudge** | ✅ | Hourly tick; `follow_up_nudge` in config; `nudge_sent_at` column |
+| 2.5 | **Multi-language** | ✅ | First-message detect `en`/`bn`/`ar`; injected into system prompt |
 
 **Done when:** Qualified lead appears in Slack/email/Sheet without opening terminal logs.
 
@@ -234,7 +234,7 @@ Future `config.json` shape (incremental, backward compatible):
 {
   "business_name": "Teddy Web Agency",
   "owner_number": "8801521207499",
-  "model": "gpt-4o-mini",
+  "model": "gemma4:31b-cloud",
   "mode": "receptionist",
   "reply_to_groups": false,
   "reply_to_self_chat": true,
@@ -275,7 +275,7 @@ Current schema is enough for Phase 1–2. Planned additions:
 ### Receptionist
 
 - Keep **structured JSON** for reliable lead extraction.
-- Model: `gpt-4o-mini` default; upgrade to `gpt-4o` only if qualification quality is weak.
+- Model: `gemma4:31b-cloud` (Ollama Cloud); change in `config.json` if needed.
 - Temperature: ~0.4 (current).
 
 ### Personal

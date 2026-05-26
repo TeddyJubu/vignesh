@@ -3,5 +3,6 @@
 whatsmeow.db
 database.db
 ai-receptionist
+ai-receptionist-linux
 .DS_Store
 errors.log

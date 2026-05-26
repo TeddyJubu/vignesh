@@ -6,8 +6,9 @@ import (
 )
 
 func AdminSummary(businessName, phone string, data map[string]string, aiSummary string) string {
+	score := Score(data)
 	var b strings.Builder
-	fmt.Fprintf(&b, "🔥 New qualified lead — %s\n", businessName)
+	fmt.Fprintf(&b, "🔥 New qualified lead — %s [%s]\n", businessName, strings.ToUpper(score))
 	fmt.Fprintf(&b, "Name: %s\n", data["name"])
 	fmt.Fprintf(&b, "Phone: %s\n", phone)
 	fmt.Fprintf(&b, "Business: %s\n", data["business_type"])

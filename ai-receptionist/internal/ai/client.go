@@ -14,59 +14,81 @@ import (
 	"ai-receptionist/internal/ops"
 )
 
-const openAIURL = "https://api.openai.com/v1/chat/completions"
+const (
+	defaultOllamaChatURL = "https://ollama.com/api/chat"
+	defaultModel         = "gemma4:31b-cloud"
+)
 
 type Client struct {
 	model  string
 	apiKey string
+	apiURL string
 	http   *http.Client
 }
 
 func NewClient(model string) (*Client, error) {
-	key := os.Getenv("OPENAI_API_KEY")
+	key := strings.TrimSpace(os.Getenv("OLLAMA_API_KEY"))
 	if key == "" {
-		return nil, fmt.Errorf("OPENAI_API_KEY is not set")
+		return nil, fmt.Errorf("OLLAMA_API_KEY is not set (create one at https://ollama.com/settings/keys)")
 	}
 	if strings.TrimSpace(model) == "" {
-		model = "gpt-4o-mini"
+		model = defaultModel
+	}
+	url := strings.TrimSpace(os.Getenv("OLLAMA_API_URL"))
+	if url == "" {
+		url = defaultOllamaChatURL
 	}
 	return &Client{
 		model:  model,
 		apiKey: key,
-		http:   &http.Client{Timeout: 90 * time.Second},
+		apiURL: url,
+		http:   &http.Client{Timeout: 180 * time.Second},
 	}, nil
 }
 
 type chatRequest struct {
-	Model          string        `json:"model"`
-	Messages       []ChatMessage `json:"messages"`
-	Temperature    float64       `json:"temperature,omitempty"`
-	ResponseFormat *struct {
-		Type string `json:"type"`
-	} `json:"response_format,omitempty"`
+	Model    string        `json:"model"`
+	Messages []ChatMessage `json:"messages"`
+	Stream   bool          `json:"stream"`
+	Format   any           `json:"format,omitempty"`
+	Options  *chatOptions  `json:"options,omitempty"`
+}
+
+type chatOptions struct {
+	Temperature float64 `json:"temperature"`
 }
 
 type chatResponse struct {
-	Choices []struct {
-		Message struct {
-			Content string `json:"content"`
-		} `json:"message"`
-	} `json:"choices"`
-	Error *struct {
-		Message string `json:"message"`
-	} `json:"error"`
+	Message struct {
+		Role     string `json:"role"`
+		Content  string `json:"content"`
+		Thinking string `json:"thinking"`
+	} `json:"message"`
+	Error string `json:"error,omitempty"`
+}
+
+func receptionistJSONFormat() map[string]any {
+	return map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"reply":        map[string]any{"type": "string"},
+			"lead_updates": map[string]any{"type": "object"},
+			"qualified":    map[string]any{"type": "boolean"},
+			"summary":      map[string]any{"type": "string"},
+		},
+		"required": []string{"reply"},
+	}
 }
 
 func (c *Client) Complete(ctx context.Context, messages []ChatMessage, jsonMode bool) (string, error) {
 	reqBody := chatRequest{
-		Model:       c.model,
-		Messages:    messages,
-		Temperature: 0.4,
+		Model:    c.model,
+		Messages: messages,
+		Stream:   false,
+		Options:  &chatOptions{Temperature: 0.4},
 	}
 	if jsonMode {
-		reqBody.ResponseFormat = &struct {
-			Type string `json:"type"`
-		}{Type: "json_object"}
+		reqBody.Format = receptionistJSONFormat()
 	}
 	body, err := json.Marshal(reqBody)
 	if err != nil {
@@ -81,32 +103,45 @@ func (c *Client) Complete(ctx context.Context, messages []ChatMessage, jsonMode 
 		time.Sleep(2 * time.Second)
 		raw, status, err = c.postOnce(ctx, body)
 		if err != nil {
-			ops.AppendErrorLog("openai", err)
+			ops.AppendErrorLog("ollama", err)
 			return "", err
 		}
 	}
 	if status < 200 || status >= 300 {
-		apiErr := fmt.Errorf("OpenAI HTTP %d: %s", status, string(raw))
-		ops.AppendErrorLog("openai", apiErr)
+		apiErr := fmt.Errorf("Ollama HTTP %d: %s", status, string(raw))
+		ops.AppendErrorLog("ollama", apiErr)
 		return "", apiErr
 	}
 
 	var out chatResponse
 	if err := json.Unmarshal(raw, &out); err != nil {
-		ops.AppendErrorLog("openai", err)
+		// Some error bodies are {"error":"..."} without message
+		var errWrap struct {
+			Error string `json:"error"`
+		}
+		if json.Unmarshal(raw, &errWrap) == nil && errWrap.Error != "" {
+			apiErr := fmt.Errorf("Ollama error: %s", errWrap.Error)
+			ops.AppendErrorLog("ollama", apiErr)
+			return "", apiErr
+		}
+		ops.AppendErrorLog("ollama", err)
 		return "", err
 	}
-	if out.Error != nil && out.Error.Message != "" {
-		apiErr := fmt.Errorf("OpenAI error: %s", out.Error.Message)
-		ops.AppendErrorLog("openai", apiErr)
+	if out.Error != "" {
+		apiErr := fmt.Errorf("Ollama error: %s", out.Error)
+		ops.AppendErrorLog("ollama", apiErr)
 		return "", apiErr
 	}
-	if len(out.Choices) == 0 {
-		apiErr := fmt.Errorf("OpenAI returned no choices")
-		ops.AppendErrorLog("openai", apiErr)
+	content := strings.TrimSpace(out.Message.Content)
+	if content == "" {
+		content = strings.TrimSpace(out.Message.Thinking)
+	}
+	if content == "" {
+		apiErr := fmt.Errorf("Ollama returned empty message")
+		ops.AppendErrorLog("ollama", apiErr)
 		return "", apiErr
 	}
-	return out.Choices[0].Message.Content, nil
+	return content, nil
 }
 
 func shouldRetry(status int) bool {
@@ -114,7 +149,7 @@ func shouldRetry(status int) bool {
 }
 
 func (c *Client) postOnce(ctx context.Context, body []byte) ([]byte, int, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, openAIURL, bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.apiURL, bytes.NewReader(body))
 	if err != nil {
 		return nil, 0, err
 	}
@@ -123,7 +158,7 @@ func (c *Client) postOnce(ctx context.Context, body []byte) ([]byte, int, error)
 
 	resp, err := c.http.Do(req)
 	if err != nil {
-		ops.AppendErrorLog("openai", err)
+		ops.AppendErrorLog("ollama", err)
 		return nil, 0, err
 	}
 	defer resp.Body.Close()
@@ -138,7 +173,7 @@ func (c *Client) postOnce(ctx context.Context, body []byte) ([]byte, int, error)
 // Ping verifies the API key with a minimal completion.
 func (c *Client) Ping(ctx context.Context) error {
 	_, err := c.Complete(ctx, []ChatMessage{
-		{Role: "user", Content: "ping"},
+		{Role: "user", Content: "Reply with exactly: ok"},
 	}, false)
 	return err
 }

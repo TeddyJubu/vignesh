@@ -119,9 +119,12 @@ func (h *Handler) handleDebounced(ctx context.Context, v *events.Message, in wha
 }
 
 func (h *Handler) sendFailureReply(ctx context.Context, v *events.Message, err error) {
-	msg := "I couldn't reach the AI right now — check the bot terminal (OPENAI_API_KEY or quota)."
-	if strings.Contains(err.Error(), "403") || strings.Contains(strings.ToLower(err.Error()), "limit") {
-		msg = "OpenAI quota or billing issue — check platform.openai.com and your API key."
+	msg := "I couldn't reach the AI right now — check the bot terminal (OLLAMA_API_KEY or Ollama Cloud status)."
+	if strings.Contains(err.Error(), "403") || strings.Contains(err.Error(), "401") {
+		msg = "Ollama Cloud auth failed — check OLLAMA_API_KEY at ollama.com/settings/keys."
+	}
+	if strings.Contains(err.Error(), "429") || strings.Contains(strings.ToLower(err.Error()), "limit") {
+		msg = "Ollama rate limit — try again shortly."
 	}
 	_ = whatsapp.SendText(ctx, h.wa, v.Info.Chat, msg)
 }
@@ -153,6 +156,14 @@ func (h *Handler) process(ctx context.Context, v *events.Message, in whatsapp.In
 		return nil
 	}
 
+	if contact.Language == "" {
+		lang := DetectLanguage(text)
+		if err := h.store.SetContactLanguage(convID, lang); err != nil {
+			return err
+		}
+		contact.Language = lang
+	}
+
 	if h.cfg.QuietHours.InQuietHours(time.Now()) {
 		if err := h.store.InsertMessage(convID, "user", text); err != nil {
 			return err
@@ -182,7 +193,7 @@ func (h *Handler) process(ctx context.Context, v *events.Message, in whatsapp.In
 	}
 
 	leadData := contact.LeadData
-	system := h.buildSystemPrompt(leadData, in)
+	system := h.buildSystemPrompt(leadData, in, contact.Language)
 
 	var histMsgs []ai.ChatMessage
 	for _, m := range history {
@@ -230,7 +241,11 @@ func (h *Handler) process(ctx context.Context, v *events.Message, in whatsapp.In
 		leadData = leadDataOut
 		name := lead.DenormalizedName(leadData)
 		leadJSON, _ := json.Marshal(leadData)
-		if err := h.store.UpdateContact(convID, name, string(leadJSON), status); err != nil {
+		score := ""
+		if qualified {
+			score = lead.Score(leadData)
+		}
+		if err := h.store.UpdateContactWithScore(convID, name, string(leadJSON), status, score); err != nil {
 			return err
 		}
 	}
@@ -323,7 +338,7 @@ func (h *Handler) notifyQualifiedLead(ctx context.Context, convID string, in wha
 	return nil
 }
 
-func (h *Handler) buildSystemPrompt(leadData map[string]string, in whatsapp.InboundContext) string {
+func (h *Handler) buildSystemPrompt(leadData map[string]string, in whatsapp.InboundContext, language string) string {
 	p := h.promptTpl
 	p = strings.ReplaceAll(p, "{{business_name}}", h.cfg.BusinessName)
 	p = strings.ReplaceAll(p, "{{business_description}}", h.cfg.BusinessDescription)
@@ -334,6 +349,11 @@ func (h *Handler) buildSystemPrompt(leadData map[string]string, in whatsapp.Inbo
 	if h.styleExtra != "" {
 		b.WriteString("\n\n## Style examples\n")
 		b.WriteString(h.styleExtra)
+		b.WriteString("\n")
+	}
+	if language != "" {
+		b.WriteString("\n\n## Language\n")
+		b.WriteString(languagePromptLine(language))
 		b.WriteString("\n")
 	}
 	if in.IsGroup {

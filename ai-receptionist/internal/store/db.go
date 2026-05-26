@@ -196,6 +196,17 @@ func (d *DB) ClearPauseIfExpired(phone string, now time.Time) error {
 }
 
 func (d *DB) UpdateContact(phone, name, leadJSON, status string) error {
+	return d.UpdateContactWithScore(phone, name, leadJSON, status, "")
+}
+
+func (d *DB) UpdateContactWithScore(phone, name, leadJSON, status, leadScore string) error {
+	if leadScore != "" {
+		_, err := d.db.Exec(
+			`UPDATE contacts SET name = ?, lead_data = ?, status = ?, lead_score = ?, last_message_at = datetime('now') WHERE phone = ?`,
+			name, leadJSON, status, leadScore, phone,
+		)
+		return err
+	}
 	_, err := d.db.Exec(
 		`UPDATE contacts SET name = ?, lead_data = ?, status = ?, last_message_at = datetime('now') WHERE phone = ?`,
 		name, leadJSON, status, phone,
@@ -219,6 +230,53 @@ func (d *DB) MarkWebhookSent(phone string) error {
 	return err
 }
 
+func (d *DB) SetContactLanguage(phone, lang string) error {
+	_, err := d.db.Exec(
+		`UPDATE contacts SET language = ? WHERE phone = ?`,
+		lang, phone,
+	)
+	return err
+}
+
+func (d *DB) ListStaleCollecting(cutoff time.Time) ([]string, error) {
+	cutoffStr := cutoff.UTC().Format("2006-01-02 15:04:05")
+	rows, err := d.db.Query(
+		`SELECT c.phone FROM contacts c
+		 WHERE c.status = 'collecting'
+		   AND (c.nudge_sent_at IS NULL OR c.nudge_sent_at = '')
+		   AND (c.paused_until IS NULL OR datetime(c.paused_until) <= datetime('now'))
+		   AND EXISTS (
+		     SELECT 1 FROM messages m WHERE m.phone = c.phone AND m.role = 'user'
+		   )
+		   AND (
+		     SELECT MAX(datetime(m.created_at)) FROM messages m
+		     WHERE m.phone = c.phone AND m.role = 'user'
+		   ) <= datetime(?)`,
+		cutoffStr,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var phone string
+		if err := rows.Scan(&phone); err != nil {
+			return nil, err
+		}
+		out = append(out, phone)
+	}
+	return out, rows.Err()
+}
+
+func (d *DB) MarkNudgeSent(phone string) error {
+	_, err := d.db.Exec(
+		`UPDATE contacts SET nudge_sent_at = datetime('now') WHERE phone = ?`,
+		phone,
+	)
+	return err
+}
+
 func (d *DB) InsertMessage(phone, role, text string) error {
 	_, err := d.db.Exec(
 		`INSERT INTO messages (phone, role, message) VALUES (?, ?, ?)`,
@@ -226,6 +284,13 @@ func (d *DB) InsertMessage(phone, role, text string) error {
 	)
 	if err != nil {
 		return err
+	}
+	if role == "user" {
+		_, _ = d.db.Exec(
+			`UPDATE contacts SET nudge_sent_at = NULL, last_message_at = datetime('now') WHERE phone = ?`,
+			phone,
+		)
+		return nil
 	}
 	_, err = d.db.Exec(`UPDATE contacts SET last_message_at = datetime('now') WHERE phone = ?`, phone)
 	return err

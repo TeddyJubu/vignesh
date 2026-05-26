@@ -10,6 +10,8 @@ import (
 	"fmt"
 	"net/http"
 	"time"
+
+	"ai-receptionist/internal/lead"
 )
 
 type QualifyPayload struct {
@@ -18,11 +20,12 @@ type QualifyPayload struct {
 	Phone         string            `json:"phone"`
 	Sender        string            `json:"sender"`
 	LeadData      map[string]string `json:"lead_data"`
+	LeadScore     string            `json:"lead_score"`
 	Summary       string            `json:"summary"`
 	QualifiedAt   string            `json:"qualified_at"`
 }
 
-func NotifyQualify(ctx context.Context, url, secret, businessName, convID, sender string, lead map[string]string, summary string) error {
+func NotifyQualify(ctx context.Context, url, secret, businessName, convID, sender string, leadData map[string]string, summary string) error {
 	if url == "" {
 		return nil
 	}
@@ -31,7 +34,8 @@ func NotifyQualify(ctx context.Context, url, secret, businessName, convID, sende
 		BusinessName: businessName,
 		Phone:        convID,
 		Sender:       sender,
-		LeadData:     lead,
+		LeadData:     leadData,
+		LeadScore:    lead.Score(leadData),
 		Summary:      summary,
 		QualifiedAt:  time.Now().UTC().Format(time.RFC3339),
 	}

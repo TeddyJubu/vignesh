@@ -15,6 +15,12 @@ type QuietHours struct {
 	Message string `json:"message,omitempty"`
 }
 
+type FollowUpNudge struct {
+	Enabled   bool   `json:"enabled"`
+	IdleHours int    `json:"idle_hours,omitempty"` // default 24
+	Message   string `json:"message,omitempty"`
+}
+
 type Config struct {
 	BusinessName        string `json:"business_name"`
 	OwnerNumber         string `json:"owner_number"`
@@ -38,7 +44,8 @@ type Config struct {
 	DebounceSeconds int        `json:"debounce_seconds"`
 	WebhookURL      string     `json:"webhook_url"`
 	WebhookSecret   string     `json:"webhook_secret"`
-	PauseHours      int        `json:"pause_hours,omitempty"` // human takeover TTL (default 24)
+	PauseHours      int           `json:"pause_hours,omitempty"` // human takeover TTL (default 24)
+	FollowUpNudge   FollowUpNudge `json:"follow_up_nudge"`
 }
 
 func Load(path string) (*Config, error) {
@@ -57,7 +64,7 @@ func Load(path string) (*Config, error) {
 		return nil, fmt.Errorf("owner_number is required")
 	}
 	if strings.TrimSpace(c.Model) == "" {
-		c.Model = "gpt-4o-mini"
+		c.Model = "gemma4:31b-cloud"
 	}
 	c.OwnerNumber = NormalizePhone(c.OwnerNumber)
 	c.AllowedNumbers = normalizePhoneList(c.AllowedNumbers)
@@ -119,6 +126,24 @@ func (c *Config) LeadTrackingEnabled() bool {
 
 func (c *Config) OwnerAlertsEnabled() bool {
 	return c.EnableOwnerAlerts != nil && *c.EnableOwnerAlerts
+}
+
+func (c *Config) NudgeEnabled() bool {
+	return c.FollowUpNudge.Enabled && c.LeadTrackingEnabled() && !c.IsPersonal()
+}
+
+func (c *Config) NudgeIdleHours() int {
+	if c.FollowUpNudge.IdleHours <= 0 {
+		return 24
+	}
+	return c.FollowUpNudge.IdleHours
+}
+
+func (c *Config) NudgeMessage() string {
+	if m := strings.TrimSpace(c.FollowUpNudge.Message); m != "" {
+		return m
+	}
+	return "Hi — just checking in. Still interested? Reply anytime and we can pick up where we left off."
 }
 
 func (c *Config) IsAllowed(sender string) bool {

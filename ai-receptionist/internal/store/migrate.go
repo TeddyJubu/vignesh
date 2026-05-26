@@ -13,6 +13,7 @@ var contactMigrations = []string{
 	`ALTER TABLE contacts ADD COLUMN last_bot_reply_at TEXT`,
 	`ALTER TABLE contacts ADD COLUMN status_before_pause TEXT`,
 	`ALTER TABLE contacts ADD COLUMN webhook_sent_at TEXT`,
+	`ALTER TABLE contacts ADD COLUMN nudge_sent_at TEXT`,
 }
 
 func migrate(db *sql.DB) error {
