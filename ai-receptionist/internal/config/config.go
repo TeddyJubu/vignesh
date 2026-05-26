@@ -23,8 +23,12 @@ type FollowUpNudge struct {
 
 type Config struct {
 	BusinessName        string `json:"business_name"`
+	OwnerName           string `json:"owner_name,omitempty"` // human name for prompts/alerts
 	OwnerNumber         string `json:"owner_number"`
 	Model               string `json:"model"`
+	AIProvider          string `json:"ai_provider,omitempty"`   // ollama|openai (default ollama)
+	OpenAIModel         string `json:"openai_model,omitempty"`  // optional; can also be set by OPENAI_MODEL
+	OpenAIBaseURL       string `json:"openai_base_url,omitempty"` // optional; can also be set by OPENAI_BASE_URL
 	BusinessDescription string `json:"business_description"`
 
 	// Mode: "receptionist" (default) or "personal" (reply in your voice, no lead funnel).
@@ -66,6 +70,15 @@ func Load(path string) (*Config, error) {
 	if strings.TrimSpace(c.Model) == "" {
 		c.Model = "gemma4:31b-cloud"
 	}
+	if strings.TrimSpace(c.AIProvider) == "" {
+		c.AIProvider = strings.TrimSpace(os.Getenv("AI_PROVIDER"))
+	}
+	if strings.TrimSpace(c.OpenAIModel) == "" {
+		c.OpenAIModel = strings.TrimSpace(os.Getenv("OPENAI_MODEL"))
+	}
+	if strings.TrimSpace(c.OpenAIBaseURL) == "" {
+		c.OpenAIBaseURL = strings.TrimSpace(os.Getenv("OPENAI_BASE_URL"))
+	}
 	c.OwnerNumber = NormalizePhone(c.OwnerNumber)
 	c.AllowedNumbers = normalizePhoneList(c.AllowedNumbers)
 	c.BlockedNumbers = normalizePhoneList(c.BlockedNumbers)
@@ -76,7 +89,7 @@ func Load(path string) (*Config, error) {
 		c.PauseHours = 24
 	}
 	if strings.TrimSpace(c.QuietHours.TZ) == "" {
-		c.QuietHours.TZ = "Asia/Dhaka"
+		c.QuietHours.TZ = "Asia/Singapore"
 	}
 	c.applyModeDefaults()
 	if c.ReplyToSelfChat == nil {
@@ -84,6 +97,32 @@ func Load(path string) (*Config, error) {
 		c.ReplyToSelfChat = &t
 	}
 	return &c, nil
+}
+
+func (c *Config) ResolvedAIProvider() string {
+	p := strings.ToLower(strings.TrimSpace(c.AIProvider))
+	if p == "" {
+		p = "ollama"
+	}
+	if p != "openai" {
+		p = "ollama"
+	}
+	return p
+}
+
+func (c *Config) ResolvedOpenAIModel() string {
+	if m := strings.TrimSpace(c.OpenAIModel); m != "" {
+		return m
+	}
+	// Speed-biased default; override with OPENAI_MODEL.
+	return "gpt-4.1-mini"
+}
+
+func (c *Config) ResolvedOpenAIBaseURL() string {
+	if u := strings.TrimSpace(c.OpenAIBaseURL); u != "" {
+		return u
+	}
+	return "https://sg.api.openai.com"
 }
 
 func (c *Config) SelfChatEnabled() bool {
@@ -126,6 +165,14 @@ func (c *Config) LeadTrackingEnabled() bool {
 
 func (c *Config) OwnerAlertsEnabled() bool {
 	return c.EnableOwnerAlerts != nil && *c.EnableOwnerAlerts
+}
+
+// DisplayOwnerName is the person running the bot (prompts, handoff copy).
+func (c *Config) DisplayOwnerName() string {
+	if n := strings.TrimSpace(c.OwnerName); n != "" {
+		return n
+	}
+	return c.BusinessName
 }
 
 func (c *Config) NudgeEnabled() bool {

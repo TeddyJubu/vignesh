@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"sync"
 	"time"
 
 	"github.com/mdp/qrterminal/v3"
@@ -20,6 +21,9 @@ type Client struct {
 	WM        *whatsmeow.Client
 	onMessage func(*events.Message)
 	Sent      *OutboundTracker
+
+	ctx    context.Context
+	pairMu sync.Mutex
 }
 
 func New(ctx context.Context, dbPath string, onMessage func(*events.Message)) (*Client, error) {
@@ -34,7 +38,7 @@ func New(ctx context.Context, dbPath string, onMessage func(*events.Message)) (*
 	}
 	clientLog := waLog.Stdout("Client", "INFO", true)
 	wm := whatsmeow.NewClient(device, clientLog)
-	c := &Client{WM: wm, onMessage: onMessage, Sent: NewOutboundTracker()}
+	c := &Client{WM: wm, onMessage: onMessage, Sent: NewOutboundTracker(), ctx: ctx}
 	wm.AddEventHandler(c.eventHandler)
 	return c, nil
 }
@@ -50,23 +54,45 @@ func (c *Client) eventHandler(evt interface{}) {
 	case *events.Disconnected:
 		fmt.Println("WhatsApp disconnected")
 	case *events.LoggedOut:
-		fmt.Fprintln(os.Stderr, "Logged out — delete whatsmeow.db and scan QR again")
+		reason := ""
+		if v != nil {
+			reason = fmt.Sprintf(" (%s)", v.Reason)
+		}
+		fmt.Fprintf(os.Stderr, "Logged out from WhatsApp%s — starting new QR pairing...\n", reason)
+		c.startPairing()
 	}
 }
 
 func (c *Client) Start(ctx context.Context) error {
-	if c.WM.Store.ID != nil {
-		return c.connectLinked(ctx)
+	c.ctx = ctx
+	if c.WM.Store.ID == nil {
+		c.startPairing()
+		return nil
 	}
-	go c.runPairingLoginLoop(ctx)
+	if err := c.connectLinked(ctx); err != nil {
+		fmt.Fprintln(os.Stderr, "connect:", err)
+		c.startPairing()
+		return nil
+	}
+	if !c.WM.IsLoggedIn() {
+		c.startPairing()
+	}
 	return nil
+}
+
+func (c *Client) startPairing() {
+	c.pairMu.Lock()
+	defer c.pairMu.Unlock()
+	go c.runPairingLoginLoop(c.ctx)
 }
 
 func (c *Client) runPairingLoginLoop(ctx context.Context) {
 	for {
-		if c.WM.IsLoggedIn() {
+		if c.WM.IsLoggedIn() && c.WM.IsConnected() {
 			return
 		}
+		c.clearStaleSession(ctx)
+
 		qrChan, _ := c.WM.GetQRChannel(ctx)
 		if err := c.WM.Connect(); err != nil {
 			fmt.Fprintln(os.Stderr, "connect:", err)
@@ -78,6 +104,7 @@ func (c *Client) runPairingLoginLoop(ctx context.Context) {
 			if evt.Event == "code" {
 				fmt.Println("Scan this QR with WhatsApp (Linked Devices):")
 				qrterminal.GenerateHalfBlock(evt.Code, qrterminal.L, os.Stdout)
+				fmt.Println("(QR also in: journalctl -u ai-receptionist -n 80 --no-pager)")
 				continue
 			}
 			fmt.Println("Login event:", evt.Event)
@@ -85,20 +112,38 @@ func (c *Client) runPairingLoginLoop(ctx context.Context) {
 			case "timeout":
 				retry = true
 			case "success":
-				c.connectLinked(ctx)
+				_ = c.connectLinked(ctx)
+				if id := c.WM.Store.ID; id != nil {
+					fmt.Println("Session linked — listening for messages")
+					fmt.Println("Linked account JID:", id.String())
+				}
 				return
 			}
 		}
 		if c.WM.IsLoggedIn() {
-			c.connectLinked(ctx)
+			_ = c.connectLinked(ctx)
 			return
 		}
 		c.WM.Disconnect()
 		if !retry {
-			return
+			time.Sleep(5 * time.Second)
+			retry = true
 		}
 		time.Sleep(2 * time.Second)
 	}
+}
+
+func (c *Client) clearStaleSession(ctx context.Context) {
+	if c.WM.Store.ID == nil {
+		return
+	}
+	if c.WM.IsLoggedIn() {
+		return
+	}
+	fmt.Fprintln(os.Stderr, "clearing stale WhatsApp session for re-pairing...")
+	_ = c.WM.Logout(ctx)
+	c.WM.Disconnect()
+	time.Sleep(500 * time.Millisecond)
 }
 
 func (c *Client) connectLinked(ctx context.Context) error {

@@ -1,0 +1,29 @@
+{
+  "business_name": "Demo",
+  "owner_name": "vignesh",
+  "owner_number": "1000000000000",
+  "model": "gemma4:31b-cloud",
+  "ai_provider": "ollama",
+  "openai_model": "",
+  "openai_base_url": "",
+  "mode": "receptionist",
+  "reply_to_groups": false,
+  "reply_to_self_chat": true,
+  "business_description": "Demo receptionist for testing.",
+  "allowed_numbers": [],
+  "blocked_numbers": [],
+  "quiet_hours": {
+    "enabled": false,
+    "tz": "Asia/Singapore",
+    "start": "22:00",
+    "end": "08:00"
+  },
+  "debounce_seconds": 3,
+  "webhook_url": "",
+  "webhook_secret": "",
+  "follow_up_nudge": {
+    "enabled": true,
+    "idle_hours": 24,
+    "message": ""
+  }
+}

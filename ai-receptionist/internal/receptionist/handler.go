@@ -2,6 +2,7 @@ package receptionist
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -9,6 +10,7 @@ import (
 	"sync"
 	"time"
 
+	"ai-receptionist/internal/agent"
 	"ai-receptionist/internal/ai"
 	"ai-receptionist/internal/config"
 	"ai-receptionist/internal/lead"
@@ -24,27 +26,32 @@ import (
 const historyLimit = 10
 
 type Handler struct {
-	cfg          *config.Config
-	store        *store.DB
-	ai           *ai.Client
-	wa           *whatsapp.Client
-	promptTpl    string
-	styleExtra   string
-	debouncer    *Debouncer
+	cfg            *config.Config
+	store          *store.DB
+	ai             ai.Provider
+	wa             *whatsapp.Client
+	promptTpl      string
+	styleExtra     string
+	instructionsMD string
+	debouncer      *Debouncer
 
-	mu     sync.Mutex
-	chatMu map[string]*sync.Mutex
+	mu        sync.Mutex
+	chatMu    map[string]*sync.Mutex
+	ackMu     sync.Mutex
+	lastAckAt map[string]time.Time
 }
 
-func New(cfg *config.Config, db *store.DB, aiClient *ai.Client, wa *whatsapp.Client, promptTpl, styleExtra string) *Handler {
+func New(cfg *config.Config, db *store.DB, aiClient ai.Provider, wa *whatsapp.Client, promptTpl, styleExtra, instructionsMD string) *Handler {
 	h := &Handler{
-		cfg:        cfg,
-		store:      db,
-		ai:         aiClient,
-		wa:         wa,
-		promptTpl:  promptTpl,
-		styleExtra: styleExtra,
-		chatMu:     make(map[string]*sync.Mutex),
+		cfg:            cfg,
+		store:          db,
+		ai:             aiClient,
+		wa:             wa,
+		promptTpl:      promptTpl,
+		styleExtra:     styleExtra,
+		instructionsMD: instructionsMD,
+		chatMu:         make(map[string]*sync.Mutex),
+		lastAckAt:      make(map[string]time.Time),
 	}
 	h.debouncer = NewDebouncer(cfg.DebounceSeconds, h.handleDebounced)
 	return h
@@ -119,12 +126,20 @@ func (h *Handler) handleDebounced(ctx context.Context, v *events.Message, in wha
 }
 
 func (h *Handler) sendFailureReply(ctx context.Context, v *events.Message, err error) {
-	msg := "I couldn't reach the AI right now — check the bot terminal (OLLAMA_API_KEY or Ollama Cloud status)."
+	provider := "AI"
+	if h.ai != nil && h.ai.Name() != "" {
+		provider = strings.ToUpper(h.ai.Name())
+	}
+	msg := "I couldn't reach the AI right now — check the bot terminal (provider auth/network)."
 	if strings.Contains(err.Error(), "403") || strings.Contains(err.Error(), "401") {
-		msg = "Ollama Cloud auth failed — check OLLAMA_API_KEY at ollama.com/settings/keys."
+		if strings.Contains(strings.ToLower(provider), "openai") {
+			msg = "OpenAI auth failed — check OPENAI_API_KEY."
+		} else {
+			msg = "Ollama Cloud auth failed — check OLLAMA_API_KEY at ollama.com/settings/keys."
+		}
 	}
 	if strings.Contains(err.Error(), "429") || strings.Contains(strings.ToLower(err.Error()), "limit") {
-		msg = "Ollama rate limit — try again shortly."
+		msg = provider + " rate limit — try again shortly."
 	}
 	_ = whatsapp.SendText(ctx, h.wa, v.Info.Chat, msg)
 }
@@ -193,7 +208,10 @@ func (h *Handler) process(ctx context.Context, v *events.Message, in whatsapp.In
 	}
 
 	leadData := contact.LeadData
-	system := h.buildSystemPrompt(leadData, in, contact.Language)
+	system, err := h.buildSystemPrompt(convID, leadData, in, contact.Language)
+	if err != nil {
+		return err
+	}
 
 	var histMsgs []ai.ChatMessage
 	for _, m := range history {
@@ -212,16 +230,31 @@ func (h *Handler) process(ctx context.Context, v *events.Message, in whatsapp.In
 	var leadDataOut map[string]string
 	var summary string
 
+	overallCtx, cancel := context.WithTimeout(ctx, overallAITimeout)
+	defer cancel()
+
+	// Low perceived latency: start typing immediately. We'll stop typing right before returning.
+	whatsapp.SetTyping(overallCtx, h.wa, v.Info.Chat, true)
+	defer whatsapp.SetTyping(context.Background(), h.wa, v.Info.Chat, false)
+
+	ackCtx, cancelAck := context.WithCancel(overallCtx)
+	defer cancelAck()
+	go h.maybeSendAck(ackCtx, v.Info.Chat, convID)
+
+	raw, structuredOut, intermediate, err := h.completeWithPlanner(overallCtx, convID, msgs, !h.cfg.IsPersonal())
+	if err != nil {
+		return err
+	}
+	if intermediate {
+		cancelAck()
+	}
+
 	if h.cfg.IsPersonal() {
-		raw, err := h.ai.Complete(ctx, msgs, false)
-		if err != nil {
-			return err
-		}
 		reply = SanitizeReply(strings.TrimSpace(raw))
 	} else {
-		raw, err := h.ai.Complete(ctx, msgs, true)
-		if err != nil {
-			return err
+		if !structuredOut {
+			reply = SanitizeReply(strings.TrimSpace(raw))
+			goto SEND_REPLY
 		}
 		parsed, err := ai.ParseStructuredResponse(raw)
 		if err != nil {
@@ -236,8 +269,10 @@ func (h *Handler) process(ctx context.Context, v *events.Message, in whatsapp.In
 		summary = parsed.Summary
 	}
 
-	status := mergeLeadStatus(contact.Status, qualified, h.cfg.LeadTrackingEnabled())
-	if h.cfg.LeadTrackingEnabled() {
+SEND_REPLY:
+	canUpdateLead := !h.cfg.IsPersonal() && structuredOut
+	status := mergeLeadStatus(contact.Status, qualified, h.cfg.LeadTrackingEnabled() && canUpdateLead)
+	if h.cfg.LeadTrackingEnabled() && canUpdateLead {
 		leadData = leadDataOut
 		name := lead.DenormalizedName(leadData)
 		leadJSON, _ := json.Marshal(leadData)
@@ -263,19 +298,138 @@ func (h *Handler) process(ctx context.Context, v *events.Message, in whatsapp.In
 		return nil
 	}
 
-	whatsapp.SendTyping(ctx, h.wa, v.Info.Chat, true)
 	if err := whatsapp.SendText(ctx, h.wa, v.Info.Chat, reply); err != nil {
 		return fmt.Errorf("send reply: %w", err)
 	}
 	_ = h.store.TouchLastBotReply(convID)
+	if !intermediate {
+		_ = h.store.ClearAgentState(convID)
+	}
 
-	if h.cfg.LeadTrackingEnabled() && qualified {
+	if h.cfg.LeadTrackingEnabled() && canUpdateLead && qualified {
 		if err := h.notifyQualifiedLead(ctx, convID, in, leadData, summary, contact); err != nil {
 			return err
 		}
 	}
 
 	return nil
+}
+
+// completeWithPlanner returns raw AI output, whether receptionist JSON mode applies,
+// whether the reply is an intermediate planner question (not final collation), and any error.
+func (h *Handler) completeWithPlanner(ctx context.Context, convID string, msgs []ai.ChatMessage, structured bool) (string, bool, bool, error) {
+	// Resume if we have pending agent state.
+	if st, err := h.store.GetAgentState(convID); err == nil && st != nil {
+		var state agent.State
+		if json.Unmarshal([]byte(st.StateJSON), &state) == nil && len(state.Plan.Questions) > 0 {
+			// Consume the incoming user message as an answer to the next pending question.
+			if state.Answers == nil {
+				state.Answers = map[string]string{}
+			}
+			if state.NextQIndex < 0 {
+				state.NextQIndex = 0
+			}
+			if state.NextQIndex < len(state.Plan.Questions) {
+				// The actual answer text is always the last user message in msgs.
+				if len(msgs) > 0 {
+					last := msgs[len(msgs)-1]
+					if strings.ToLower(last.Role) == "user" {
+						q := state.Plan.Questions[state.NextQIndex]
+						state.Answers[q] = last.Content
+						state.NextQIndex++
+					}
+				}
+			}
+			if state.NextQIndex < len(state.Plan.Questions) {
+				// Ask the next question and persist state.
+				if err := h.store.UpsertAgentState(convID, state); err != nil {
+					return "", false, true, err
+				}
+				return state.Plan.Questions[state.NextQIndex], false, true, nil
+			}
+			// Done collecting answers — run tools + collate (keep state until final send succeeds).
+			out, err := h.runPlanAndCollate(ctx, &state.Plan, state.Answers, structured)
+			return out, true, false, err
+		}
+	} else if err != nil && err != sql.ErrNoRows {
+		return "", false, false, err
+	}
+
+	planCtx, cancel := budgetCtx(ctx, 6*time.Second)
+	defer cancel()
+	rawPlan, err := h.ai.Complete(planCtx, buildPlannerMessages(msgs, structured), false)
+	if err != nil {
+		// Planner failure should not block; fall back to single-shot completion.
+		fallbackCtx, cancelFB := budgetCtx(ctx, 20*time.Second)
+		defer cancelFB()
+		out, err := h.ai.Complete(fallbackCtx, msgs, structured)
+		return out, true, false, err
+	}
+	plan, err := agent.ParsePlan(rawPlan)
+	if err != nil {
+		fallbackCtx, cancelFB := budgetCtx(ctx, 20*time.Second)
+		defer cancelFB()
+		out, err := h.ai.Complete(fallbackCtx, msgs, structured)
+		return out, true, false, err
+	}
+	if len(plan.Questions) > 0 {
+		state := agent.State{
+			Plan:          *plan,
+			NextQIndex:    0,
+			Answers:       map[string]string{},
+			StartedAtUNIX: time.Now().Unix(),
+		}
+		if err := h.store.UpsertAgentState(convID, state); err != nil {
+			return "", false, true, err
+		}
+		return plan.Questions[0], false, true, nil
+	}
+	out, err := h.runPlanAndCollate(ctx, plan, nil, structured)
+	return out, true, false, err
+}
+
+func (h *Handler) runPlanAndCollate(ctx context.Context, plan *agent.Plan, answers map[string]string, structured bool) (string, error) {
+	agentCtx, cancel := budgetCtx(ctx, 10*time.Second)
+	defer cancel()
+	results := agent.RunToolsParallel(agentCtx, plan.Agents)
+
+	collateCtx, cancel2 := budgetCtx(ctx, 20*time.Second)
+	defer cancel2()
+	collateMsgs := buildCollationMessages(plan, answers, results, structured)
+	return h.ai.Complete(collateCtx, collateMsgs, structured)
+}
+
+func (h *Handler) maybeSendAck(ctx context.Context, chat types.JID, convID string) {
+	defer func() { recover() }()
+	select {
+	case <-ctx.Done():
+		return
+	case <-time.After(ackDelay):
+	}
+	if ctx.Err() != nil {
+		return
+	}
+	if !h.shouldSendAck(convID) {
+		return
+	}
+	if err := whatsapp.SendText(context.Background(), h.wa, chat, "Got it — checking now."); err == nil {
+		h.markAckSent(convID)
+	}
+}
+
+func (h *Handler) shouldSendAck(convID string) bool {
+	h.ackMu.Lock()
+	defer h.ackMu.Unlock()
+	if t, ok := h.lastAckAt[convID]; ok && time.Since(t) < ackCooldown {
+		return false
+	}
+	return true
+}
+
+func (h *Handler) markAckSent(convID string) {
+	h.ackMu.Lock()
+	defer h.ackMu.Unlock()
+	h.lastAckAt[convID] = time.Now()
 }
 
 // mergeLeadStatus updates funnel status without downgrading notified leads.
@@ -338,13 +492,20 @@ func (h *Handler) notifyQualifiedLead(ctx context.Context, convID string, in wha
 	return nil
 }
 
-func (h *Handler) buildSystemPrompt(leadData map[string]string, in whatsapp.InboundContext, language string) string {
+func (h *Handler) buildSystemPrompt(convID string, leadData map[string]string, in whatsapp.InboundContext, language string) (string, error) {
+	stack, err := buildAgentInstructions(h.store, convID, h.instructionsMD)
+	if err != nil {
+		return "", err
+	}
+
 	p := h.promptTpl
 	p = strings.ReplaceAll(p, "{{business_name}}", h.cfg.BusinessName)
 	p = strings.ReplaceAll(p, "{{business_description}}", h.cfg.BusinessDescription)
-	p = strings.ReplaceAll(p, "{{your_name}}", h.cfg.BusinessName)
+	p = strings.ReplaceAll(p, "{{your_name}}", h.cfg.DisplayOwnerName())
 
 	var b strings.Builder
+	b.WriteString(stack)
+	b.WriteString("\n\n---\n\n")
 	b.WriteString(p)
 	if h.styleExtra != "" {
 		b.WriteString("\n\n## Style examples\n")
@@ -374,5 +535,5 @@ func (h *Handler) buildSystemPrompt(leadData map[string]string, in whatsapp.Inbo
 		b.Write(leadJSON)
 		b.WriteString("\n")
 	}
-	return b.String()
+	return b.String(), nil
 }

@@ -18,7 +18,7 @@ Never commit `.env`, `*.db`, or the built `ai-receptionist` binary (see `.gitign
 
 - Go 1.25+
 - SQLite (via `github.com/mattn/go-sqlite3`)
-- Ollama Cloud API key ([ollama.com/settings/keys](https://ollama.com/settings/keys))
+- Ollama Cloud API key ([ollama.com/settings/keys](https://ollama.com/settings/keys)) **or** OpenAI API key
 - A phone number for WhatsApp Business or personal (Linked Devices)
 
 ## Quick start
@@ -27,7 +27,13 @@ Never commit `.env`, `*.db`, or the built `ai-receptionist` binary (see `.gitign
 cd ai-receptionist
 cp .env.example .env
 # Edit config.json — set owner_number (digits + country code, no +)
+export AI_PROVIDER=ollama
 export OLLAMA_API_KEY=your_key_from_ollama_com
+# Or:
+# export AI_PROVIDER=openai
+# export OPENAI_API_KEY=...
+# export OPENAI_BASE_URL=https://sg.api.openai.com   # default
+# export OPENAI_MODEL=gpt-4.1-mini                   # default
 
 go run .
 ```
@@ -42,13 +48,31 @@ Send a **private text DM** to the linked number (not the owner number in config)
 |------|---------|
 | `config.json` | Business name, owner phone, AI model |
 | `prompt.txt` | Receptionist system prompt (editable without rebuild) |
-| `.env` | `OLLAMA_API_KEY` (optional; can export in shell instead) |
+| `.env` | `AI_PROVIDER`, `OLLAMA_API_KEY` or `OPENAI_API_KEY` (optional; can export in shell instead) |
+
+## Julia (identity & instructions)
+
+The bot runs as **Julia** with a three-layer prompt stack on every AI turn:
+
+1. **Baseline + soul** — hard-coded rules plus `identity_soul` in SQLite `agent_notes` (seeded on first migrate).
+2. **Client instructions** — `knowledge/instructions.md` (override with `INSTRUCTIONS_PATH`).
+3. **Per-contact facts** — `contact_facts` table (`conv_id`, `fact_key`, `fact_value`).
+
+Optional runbook keys in `agent_notes`: `julia-cs`, `julia-sales`, `julia-booking` (placeholder content; wire into planner modes later).
+
+Edit soul or runbooks in `database.db`:
+
+```sql
+UPDATE agent_notes SET content = '...' WHERE key = 'identity_soul';
+```
 
 Environment overrides:
 
 - `WHATSMEOW_DB` — default `whatsmeow.db`
 - `APP_DB` — default `database.db`
-- `CONFIG_PATH`, `PROMPT_PATH`
+- `CONFIG_PATH`, `PROMPT_PATH`, `INSTRUCTIONS_PATH` (default `knowledge/instructions.md`)
+- `AI_PROVIDER` — `ollama` (default) or `openai`
+- `OPENAI_API_KEY`, `OPENAI_BASE_URL` (default `https://sg.api.openai.com`), `OPENAI_MODEL`
 
 ## VPS deployment (systemd)
 
@@ -97,13 +121,13 @@ export SSH_HOST=vignesh   # optional, default vignesh
 ./scripts/deploy.sh
 ```
 
-Ensure `/opt/ai-receptionist/.env` on the server contains `OLLAMA_API_KEY`. Never commit `.env`.
+Ensure `/opt/ai-receptionist/.env` on the server contains `AI_PROVIDER` plus the matching provider key (`OLLAMA_API_KEY` or `OPENAI_API_KEY`). Never commit `.env`.
 
 ## Troubleshooting: no reply
 
 1. **Watch the terminal** when you send a message. You should see:
    ```txt
-   inbound conv=self:8801521207499 chat=... text="hi"
+   inbound conv=self:1000000000000 chat=... text="hi"
    ```
    If you see `skip inbound` with `DEBUG_INBOUND=1`, the filter blocked the message.
 
@@ -111,7 +135,7 @@ Ensure `/opt/ai-receptionist/.env` on the server contains `OLLAMA_API_KEY`. Neve
 
 3. **Startup check** — on launch you should see `Ollama Cloud OK`. If you see `WARNING: Ollama Cloud check failed`, fix `OLLAMA_API_KEY` before testing WhatsApp.
 
-4. **`owner_number`** — use your full WhatsApp number (e.g. `8801521207499`), not a placeholder. On link, the terminal prints `Linked account JID: ...`.
+4. **`owner_number`** — use your full WhatsApp number (digits + country code, no `+`), not a placeholder. On link, the terminal prints `Linked account JID: ...`.
 
 5. **Self-chat test** — use **Message yourself** in WhatsApp, not a random DM to your number.
 
@@ -140,7 +164,7 @@ To auto-reply to **all private DMs** in your voice (not the agency receptionist 
    {
      "mode": "personal",
      "reply_to_groups": false,
-     "business_name": "Teddy",
+     "business_name": "Your Name",
      "business_description": "Describe how you actually text: tone, topics you handle, what you defer (pricing, meetings, etc.). Paste 3–5 example replies you would send."
    }
    ```

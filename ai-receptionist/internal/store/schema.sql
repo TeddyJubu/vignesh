@@ -21,3 +21,27 @@ CREATE TABLE IF NOT EXISTS messages (
 );
 
 CREATE INDEX IF NOT EXISTS idx_messages_phone_created ON messages(phone, created_at);
+
+CREATE TABLE IF NOT EXISTS agent_states (
+    phone TEXT PRIMARY KEY,
+    state_json TEXT NOT NULL DEFAULT '{}',
+    updated_at DATETIME NOT NULL DEFAULT (datetime('now')),
+    created_at DATETIME NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS agent_notes (
+    key TEXT PRIMARY KEY,
+    content TEXT NOT NULL,
+    updated_at DATETIME NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS contact_facts (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    conv_id TEXT NOT NULL,
+    fact_key TEXT NOT NULL,
+    fact_value TEXT NOT NULL,
+    updated_at DATETIME NOT NULL DEFAULT (datetime('now')),
+    UNIQUE(conv_id, fact_key)
+);
+
+CREATE INDEX IF NOT EXISTS idx_contact_facts_conv ON contact_facts(conv_id);

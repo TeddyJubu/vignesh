@@ -52,7 +52,16 @@ func main() {
 	}
 	promptTpl := string(promptBytes)
 
-	aiClient, err := ai.NewClient(cfg.Model)
+	instructionsPath := envOr("INSTRUCTIONS_PATH", "knowledge/instructions.md")
+	instructionsMD := ""
+	if b, err := os.ReadFile(instructionsPath); err == nil {
+		instructionsMD = strings.TrimSpace(string(b))
+	} else if !os.IsNotExist(err) {
+		fmt.Fprintln(os.Stderr, "read instructions:", err)
+		os.Exit(1)
+	}
+
+	aiClient, err := ai.NewProvider(cfg)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
@@ -80,15 +89,15 @@ func main() {
 	}
 
 	styleExtra := loadStyleExamples()
-	handler = receptionist.New(cfg, appStore, aiClient, waClient, promptTpl, styleExtra)
+	handler = receptionist.New(cfg, appStore, aiClient, waClient, promptTpl, styleExtra, instructionsMD)
 
 	if err := waClient.Start(ctx); err != nil {
 		fmt.Fprintln(os.Stderr, "start:", err)
 		os.Exit(1)
 	}
 
-	fmt.Printf("%s running mode=%s model=%s owner=%s groups=%v\n",
-		cfg.BusinessName, cfg.Mode, cfg.Model, cfg.OwnerNumber, cfg.ReplyToGroups)
+	fmt.Printf("%s running mode=%s provider=%s model=%s owner=%s groups=%v\n",
+		cfg.BusinessName, cfg.Mode, aiClient.Name(), cfg.Model, cfg.OwnerNumber, cfg.ReplyToGroups)
 	if waClient.WM.Store.ID == nil {
 		fmt.Println("Waiting for QR scan...")
 	} else {
@@ -99,10 +108,10 @@ func main() {
 	}
 
 	if err := aiClient.Ping(ctx); err != nil {
-		fmt.Fprintln(os.Stderr, "WARNING: Ollama Cloud check failed:", err)
-		fmt.Fprintln(os.Stderr, "WhatsApp will still connect but replies will fail until OLLAMA_API_KEY is valid.")
+		fmt.Fprintln(os.Stderr, "WARNING: AI provider check failed:", err)
+		fmt.Fprintln(os.Stderr, "WhatsApp will still connect but replies will fail until provider credentials are valid.")
 	} else {
-		fmt.Println("Ollama Cloud OK (model:", cfg.Model, ")")
+		fmt.Println("AI provider OK (provider:", aiClient.Name(), "model:", cfg.Model, ")")
 	}
 
 	go handler.RunNudgeLoop(ctx)

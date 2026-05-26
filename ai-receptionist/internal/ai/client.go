@@ -46,6 +46,10 @@ func NewClient(model string) (*Client, error) {
 	}, nil
 }
 
+func (c *Client) Name() string {
+	return "ollama"
+}
+
 type chatRequest struct {
 	Model    string        `json:"model"`
 	Messages []ChatMessage `json:"messages"`
@@ -100,7 +104,11 @@ func (c *Client) Complete(ctx context.Context, messages []ChatMessage, jsonMode 
 		return "", err
 	}
 	if shouldRetry(status) {
-		time.Sleep(2 * time.Second)
+		select {
+		case <-ctx.Done():
+			return "", ctx.Err()
+		case <-time.After(2 * time.Second):
+		}
 		raw, status, err = c.postOnce(ctx, body)
 		if err != nil {
 			ops.AppendErrorLog("ollama", err)

@@ -22,6 +22,9 @@ echo "→ build on server (CGO/sqlite)"
 ssh "${SSH_HOST}" "cd ${REMOTE_DIR}/src && go build -o ${REMOTE_DIR}/ai-receptionist ."
 
 echo "→ restart systemd"
-ssh "${SSH_HOST}" "systemctl restart ai-receptionist && sleep 2 && systemctl is-active ai-receptionist"
+ssh "${SSH_HOST}" "systemctl restart ai-receptionist && sleep 2 && systemctl is-active ai-receptionist" || true
 
-echo "✓ deployed. Logs: ssh ${SSH_HOST} 'journalctl -u ai-receptionist -n 30 --no-pager'"
+echo "✓ deployed. Configure secrets on server, then restart:"
+echo "  ssh ${SSH_HOST} 'nano /opt/ai-receptionist/.env /opt/ai-receptionist/config.json'"
+echo "  ssh ${SSH_HOST} 'systemctl restart ai-receptionist'"
+echo "  ssh ${SSH_HOST} 'journalctl -u ai-receptionist -f'"
