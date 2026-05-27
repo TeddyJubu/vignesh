@@ -28,11 +28,18 @@ export type DreamProposal = {
   patch?: unknown
 }
 
+export type ProviderStatus = {
+  provider?: ProviderId
+  model?: string
+  configured?: boolean
+}
+
 export type ProviderPing = {
   ok: boolean
   provider?: ProviderId
   model?: string
   message?: string
+  cached?: boolean
 }
 
 export type ComposioStatus = {

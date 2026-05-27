@@ -30,6 +30,8 @@ CREATE TABLE IF NOT EXISTS messages (
 );
 
 CREATE INDEX IF NOT EXISTS idx_messages_phone_created ON messages(phone, created_at);
+CREATE INDEX IF NOT EXISTS idx_messages_phone_role_created ON messages(phone, role, created_at);
+CREATE INDEX IF NOT EXISTS idx_contacts_collecting_nudge ON contacts(status, nudge_sent_at, paused_until);
 
 CREATE TABLE IF NOT EXISTS agent_states (
     phone TEXT PRIMARY KEY,

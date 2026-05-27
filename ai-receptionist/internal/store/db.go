@@ -53,6 +53,22 @@ func Open(path string) (*DB, error) {
 	if err != nil {
 		return nil, err
 	}
+	db.SetMaxOpenConns(4)
+	db.SetMaxIdleConns(2)
+	db.SetConnMaxLifetime(0)
+	if path != ":memory:" {
+		for _, pragma := range []string{
+			`PRAGMA journal_mode=WAL`,
+			`PRAGMA synchronous=NORMAL`,
+			`PRAGMA busy_timeout=5000`,
+			`PRAGMA foreign_keys=ON`,
+		} {
+			if _, err := db.Exec(pragma); err != nil {
+				_ = db.Close()
+				return nil, fmt.Errorf("pragma %s: %w", pragma, err)
+			}
+		}
+	}
 	if _, err := db.Exec(schemaSQL); err != nil {
 		_ = db.Close()
 		return nil, fmt.Errorf("migrate: %w", err)
