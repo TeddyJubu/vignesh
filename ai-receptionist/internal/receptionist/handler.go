@@ -10,7 +10,9 @@ import (
 	"sync"
 	"time"
 
+	"ai-receptionist/internal/adapters/calendar"
 	"ai-receptionist/internal/agent"
+	"ai-receptionist/internal/agent/tools"
 	"ai-receptionist/internal/ai"
 	"ai-receptionist/internal/config"
 	"ai-receptionist/internal/lead"
@@ -34,11 +36,12 @@ type Handler struct {
 	styleExtra     string
 	instructionsMD string
 	debouncer      *Debouncer
+	promptBuilder  *PromptBuilder
+	toolReg        *tools.Registry
+	calendar       calendar.Calendar
 
-	mu        sync.Mutex
-	chatMu    map[string]*sync.Mutex
+	chatLocks *convCache
 	ackMu     sync.Mutex
-	lastAckAt map[string]time.Time
 }
 
 func New(cfg *config.Config, db *store.DB, aiClient ai.Provider, wa *whatsapp.Client, promptTpl, styleExtra, instructionsMD string) *Handler {
@@ -50,8 +53,10 @@ func New(cfg *config.Config, db *store.DB, aiClient ai.Provider, wa *whatsapp.Cl
 		promptTpl:      promptTpl,
 		styleExtra:     styleExtra,
 		instructionsMD: instructionsMD,
-		chatMu:         make(map[string]*sync.Mutex),
-		lastAckAt:      make(map[string]time.Time),
+		promptBuilder:  NewPromptBuilder(cfg, db, instructionsMD),
+		toolReg:        tools.DefaultRegistry(),
+		calendar:       calendar.New(),
+		chatLocks:      newConvCache(),
 	}
 	h.debouncer = NewDebouncer(cfg.DebounceSeconds, h.handleDebounced)
 	return h
@@ -145,14 +150,22 @@ func (h *Handler) sendFailureReply(ctx context.Context, v *events.Message, err e
 }
 
 func (h *Handler) chatLock(phone string) *sync.Mutex {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	if m, ok := h.chatMu[phone]; ok {
-		return m
+	v := h.chatLocks.GetOrSet(phone, func() any { return &sync.Mutex{} })
+	return v.(*sync.Mutex)
+}
+
+func (h *Handler) parseStructuredWithRepair(ctx context.Context, raw string) (*ai.StructuredResponse, error) {
+	parsed, err := ai.DecodeStructured(raw)
+	if err == nil {
+		return parsed, nil
 	}
-	m := &sync.Mutex{}
-	h.chatMu[phone] = m
-	return m
+	repairCtx, cancel := budgetCtx(ctx, 8*time.Second)
+	defer cancel()
+	repaired, err2 := h.ai.Complete(repairCtx, ai.RepairStructuredPrompt(raw), true)
+	if err2 != nil {
+		return nil, err
+	}
+	return ai.DecodeStructured(repaired)
 }
 
 func (h *Handler) process(ctx context.Context, v *events.Message, in whatsapp.InboundContext, text string) error {
@@ -208,7 +221,12 @@ func (h *Handler) process(ctx context.Context, v *events.Message, in whatsapp.In
 	}
 
 	leadData := contact.LeadData
-	system, err := h.buildSystemPrompt(convID, leadData, in, contact.Language)
+	mode := ResolveMode(contact, in, text)
+	if contact.Mode != mode {
+		_ = h.store.SetContactMode(convID, mode)
+		contact.Mode = mode
+	}
+	system, err := h.buildSystemPrompt(convID, leadData, in, contact.Language, mode)
 	if err != nil {
 		return err
 	}
@@ -241,7 +259,11 @@ func (h *Handler) process(ctx context.Context, v *events.Message, in whatsapp.In
 	defer cancelAck()
 	go h.maybeSendAck(ackCtx, v.Info.Chat, convID)
 
-	raw, structuredOut, intermediate, err := h.completeWithPlanner(overallCtx, convID, msgs, !h.cfg.IsPersonal())
+	providerName := "unknown"
+	if h.ai != nil {
+		providerName = h.ai.Name()
+	}
+	raw, structuredOut, intermediate, toolResults, err := h.completeWithPlanner(overallCtx, convID, msgs, !h.cfg.IsPersonal(), providerName)
 	if err != nil {
 		return err
 	}
@@ -256,11 +278,11 @@ func (h *Handler) process(ctx context.Context, v *events.Message, in whatsapp.In
 			reply = SanitizeReply(strings.TrimSpace(raw))
 			goto SEND_REPLY
 		}
-		parsed, err := ai.ParseStructuredResponse(raw)
+		parsed, err := h.parseStructuredWithRepair(overallCtx, raw)
 		if err != nil {
 			return err
 		}
-		reply = SanitizeReply(parsed.Reply)
+		reply = SanitizeReplyWithTools(parsed.Reply, toolResults)
 		leadDataOut = lead.Merge(leadData, parsed.LeadUpdates)
 		qualified = lead.IsQualified(leadDataOut)
 		if parsed.Qualified {
@@ -298,9 +320,14 @@ SEND_REPLY:
 		return nil
 	}
 
+	sendStart := time.Now()
 	if err := whatsapp.SendText(ctx, h.wa, v.Info.Chat, reply); err != nil {
+		logTurnPhase(convID, providerName, "send", sendStart, err)
+		traceTurn(h.store, convID, "send", sendStart, err)
 		return fmt.Errorf("send reply: %w", err)
 	}
+	logTurnPhase(convID, providerName, "send", sendStart, nil)
+	traceTurn(h.store, convID, "send", sendStart, nil)
 	_ = h.store.TouchLastBotReply(convID)
 	if !intermediate {
 		_ = h.store.ClearAgentState(convID)
@@ -317,7 +344,7 @@ SEND_REPLY:
 
 // completeWithPlanner returns raw AI output, whether receptionist JSON mode applies,
 // whether the reply is an intermediate planner question (not final collation), and any error.
-func (h *Handler) completeWithPlanner(ctx context.Context, convID string, msgs []ai.ChatMessage, structured bool) (string, bool, bool, error) {
+func (h *Handler) completeWithPlanner(ctx context.Context, convID string, msgs []ai.ChatMessage, structured bool, provider string) (raw string, structuredOut bool, intermediate bool, toolResults []agent.ToolResult, err error) {
 	// Resume if we have pending agent state.
 	if st, err := h.store.GetAgentState(convID); err == nil && st != nil {
 		var state agent.State
@@ -343,34 +370,44 @@ func (h *Handler) completeWithPlanner(ctx context.Context, convID string, msgs [
 			if state.NextQIndex < len(state.Plan.Questions) {
 				// Ask the next question and persist state.
 				if err := h.store.UpsertAgentState(convID, state); err != nil {
-					return "", false, true, err
+					return "", false, true, nil, err
 				}
-				return state.Plan.Questions[state.NextQIndex], false, true, nil
+				return state.Plan.Questions[state.NextQIndex], false, true, nil, nil
 			}
 			// Done collecting answers — run tools + collate (keep state until final send succeeds).
-			out, err := h.runPlanAndCollate(ctx, &state.Plan, state.Answers, structured)
-			return out, true, false, err
+			out, results, err := h.runPlanAndCollate(ctx, convID, &state.Plan, state.Answers, structured, provider)
+			return out, true, false, results, err
 		}
 	} else if err != nil && err != sql.ErrNoRows {
-		return "", false, false, err
+		return "", false, false, nil, err
 	}
 
 	planCtx, cancel := budgetCtx(ctx, 6*time.Second)
 	defer cancel()
-	rawPlan, err := h.ai.Complete(planCtx, buildPlannerMessages(msgs, structured), false)
+	planStart := time.Now()
+	rawPlan, err := h.ai.Complete(planCtx, buildPlannerMessages(msgs, structured, h.toolReg), false)
+	logTurnPhase(convID, provider, "planner", planStart, err)
+	traceTurn(h.store, convID, "planner", planStart, err)
 	if err != nil {
-		// Planner failure should not block; fall back to single-shot completion.
 		fallbackCtx, cancelFB := budgetCtx(ctx, 20*time.Second)
 		defer cancelFB()
 		out, err := h.ai.Complete(fallbackCtx, msgs, structured)
-		return out, true, false, err
+		return out, true, false, nil, err
 	}
 	plan, err := agent.ParsePlan(rawPlan)
 	if err != nil {
+		repairCtx, cancelRepair := budgetCtx(ctx, 4*time.Second)
+		repaired, errRepair := h.ai.Complete(repairCtx, buildPlannerRepairMessages(rawPlan, structured, h.toolReg), false)
+		cancelRepair()
+		if errRepair == nil {
+			plan, err = agent.ParsePlan(repaired)
+		}
+	}
+	if err != nil {
 		fallbackCtx, cancelFB := budgetCtx(ctx, 20*time.Second)
 		defer cancelFB()
 		out, err := h.ai.Complete(fallbackCtx, msgs, structured)
-		return out, true, false, err
+		return out, true, false, nil, err
 	}
 	if len(plan.Questions) > 0 {
 		state := agent.State{
@@ -380,23 +417,34 @@ func (h *Handler) completeWithPlanner(ctx context.Context, convID string, msgs [
 			StartedAtUNIX: time.Now().Unix(),
 		}
 		if err := h.store.UpsertAgentState(convID, state); err != nil {
-			return "", false, true, err
+			return "", false, true, nil, err
 		}
-		return plan.Questions[0], false, true, nil
+		return plan.Questions[0], false, true, nil, nil
 	}
-	out, err := h.runPlanAndCollate(ctx, plan, nil, structured)
-	return out, true, false, err
+	out, results, err := h.runPlanAndCollate(ctx, convID, plan, nil, structured, provider)
+	return out, true, false, results, err
 }
 
-func (h *Handler) runPlanAndCollate(ctx context.Context, plan *agent.Plan, answers map[string]string, structured bool) (string, error) {
-	agentCtx, cancel := budgetCtx(ctx, 10*time.Second)
+func (h *Handler) runPlanAndCollate(ctx context.Context, convID string, plan *agent.Plan, answers map[string]string, structured bool, provider string) (string, []agent.ToolResult, error) {
+	rc := h.toolRunContext(convID)
+	rc.Deps.Calendar = h.calendar
+	toolCtx := tools.ContextWithCalendar(ctx, h.calendar)
+
+	agentCtx, cancel := budgetCtx(toolCtx, 10*time.Second)
 	defer cancel()
-	results := agent.RunToolsParallel(agentCtx, plan.Agents)
+	toolStart := time.Now()
+	results := agent.RunToolsParallel(agentCtx, rc, plan.Agents)
+	logTurnPhase(convID, provider, "tools", toolStart, nil)
+	traceTurn(h.store, convID, "tools", toolStart, nil)
 
 	collateCtx, cancel2 := budgetCtx(ctx, 20*time.Second)
 	defer cancel2()
+	collateStart := time.Now()
 	collateMsgs := buildCollationMessages(plan, answers, results, structured)
-	return h.ai.Complete(collateCtx, collateMsgs, structured)
+	out, err := h.ai.Complete(collateCtx, collateMsgs, structured)
+	logTurnPhase(convID, provider, "collate", collateStart, err)
+	traceTurn(h.store, convID, "collate", collateStart, err)
+	return out, results, err
 }
 
 func (h *Handler) maybeSendAck(ctx context.Context, chat types.JID, convID string) {
@@ -412,24 +460,32 @@ func (h *Handler) maybeSendAck(ctx context.Context, chat types.JID, convID strin
 	if !h.shouldSendAck(convID) {
 		return
 	}
-	if err := whatsapp.SendText(context.Background(), h.wa, chat, "Got it — checking now."); err == nil {
+	if err := whatsapp.SendText(ctx, h.wa, chat, "Got it — checking now."); err == nil {
 		h.markAckSent(convID)
 	}
 }
 
 func (h *Handler) shouldSendAck(convID string) bool {
+	now := time.Now()
+	if t, err := h.store.GetLastAckAt(convID); err == nil && t != nil && now.Sub(*t) < ackCooldown {
+		return false
+	}
 	h.ackMu.Lock()
 	defer h.ackMu.Unlock()
-	if t, ok := h.lastAckAt[convID]; ok && time.Since(t) < ackCooldown {
-		return false
+	if v, ok := h.chatLocks.Get("ack:" + convID); ok {
+		if t, ok := v.(time.Time); ok && now.Sub(t) < ackCooldown {
+			return false
+		}
 	}
 	return true
 }
 
 func (h *Handler) markAckSent(convID string) {
+	now := time.Now()
+	_ = h.store.TouchLastAckAt(convID, now)
 	h.ackMu.Lock()
-	defer h.ackMu.Unlock()
-	h.lastAckAt[convID] = time.Now()
+	h.chatLocks.Set("ack:"+convID, now)
+	h.ackMu.Unlock()
 }
 
 // mergeLeadStatus updates funnel status without downgrading notified leads.
@@ -492,8 +548,8 @@ func (h *Handler) notifyQualifiedLead(ctx context.Context, convID string, in wha
 	return nil
 }
 
-func (h *Handler) buildSystemPrompt(convID string, leadData map[string]string, in whatsapp.InboundContext, language string) (string, error) {
-	stack, err := buildAgentInstructions(h.store, convID, h.instructionsMD)
+func (h *Handler) buildSystemPrompt(convID string, leadData map[string]string, in whatsapp.InboundContext, language, mode string) (string, error) {
+	stack, err := h.promptBuilder.Build(convID, mode)
 	if err != nil {
 		return "", err
 	}
