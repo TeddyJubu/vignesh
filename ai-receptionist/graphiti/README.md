@@ -31,6 +31,7 @@ uvicorn app.main:app --reload --host 0.0.0.0 --port 8333
   - body: `{ "conv_id": "...", "timestamp": "...", "role": "user|assistant", "text": "...", "meta": {...} }`
 - `GET /recall?conv_id=...&q=...`
   - returns: `{ "items": [{ "text": "...", "score": 0.0, "source": "graphiti|sqlite", "created_at": "..." }], "snippet": "..." }`
+  - Graphiti ingest/recall use `group_id=conv_id` so memories stay scoped per conversation.
 - `POST /dreams/propose`
   - returns a draft proposal payload (`id`, `title`, `patch`, `rationale`). **Does not persist** — the Go app writes proposals into `APP_DB` (`database.db`) via `POST /api/dreams/propose`.
 
