@@ -123,7 +123,7 @@ func (g *googleCalendar) bookAppointmentReal(ctx context.Context, convID, input 
 	end := start.Add(30 * time.Minute)
 	ev := &calendar.Event{
 		Summary:     "Call — WhatsApp booking",
-		Description: fmt.Sprintf("Booked via Julia for conv %s. Input: %s", convID, input),
+		Description: fmt.Sprintf("Booked via Julia for conv %s", convID),
 		Start:       &calendar.EventDateTime{DateTime: start.Format(time.RFC3339), TimeZone: g.tz.String()},
 		End:         &calendar.EventDateTime{DateTime: end.Format(time.RFC3339), TimeZone: g.tz.String()},
 	}
@@ -131,12 +131,16 @@ func (g *googleCalendar) bookAppointmentReal(ctx context.Context, convID, input 
 	if err != nil {
 		return "", err
 	}
+	idemKey := strings.TrimSpace(input)
+	if i := strings.Index(idemKey, "|"); i >= 0 {
+		idemKey = strings.TrimSpace(idemKey[:i])
+	}
 	b, _ := json.Marshal(map[string]any{
 		"booked":          true,
 		"event_id":        created.Id,
 		"start":           start.Format(time.RFC3339),
 		"conv_id":         convID,
-		"idempotency_key": input,
+		"idempotency_key": idemKey,
 		"source":          "google_calendar",
 	})
 	return string(b), nil

@@ -44,7 +44,7 @@ type Deps struct {
 
 type Store interface {
 	InsertToolRun(convID, tool, input, output, errMsg string, latencyMS int64) error
-	InsertAsyncJob(job AsyncJob) error
+	InsertAsyncJob(job AsyncJob) (string, error)
 	RecentMessages(convID string, limit int) ([]Message, error)
 	PauseContact(phone string, until time.Time) error
 	GetOrCreateContact(phone string) (Contact, error)

@@ -16,7 +16,7 @@ func (s storeAdapter) InsertToolRun(convID, tool, input, output, errMsg string, 
 	return s.db.InsertToolRun(convID, tool, input, output, errMsg, latencyMS)
 }
 
-func (s storeAdapter) InsertAsyncJob(job tools.AsyncJob) error {
+func (s storeAdapter) InsertAsyncJob(job tools.AsyncJob) (string, error) {
 	return s.db.InsertAsyncJob(store.AsyncJob{
 		ID:          job.ID,
 		ConvID:      job.ConvID,

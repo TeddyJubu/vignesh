@@ -250,10 +250,11 @@ func messageMentionsBot(v *events.Message, own types.JID, aliases []string, text
 	}
 	mentioned := false
 	checkJID := func(jid string) {
-		if jid == "" {
+		if jid == "" || own.IsEmpty() {
 			return
 		}
-		if !own.IsEmpty() && strings.Contains(jid, own.User) {
+		if mj, err := types.ParseJID(jid); err == nil &&
+			mj.User == own.User && mj.Server == own.Server {
 			mentioned = true
 		}
 	}
@@ -273,7 +274,18 @@ func messageMentionsBot(v *events.Message, own types.JID, aliases []string, text
 		if a == "" {
 			continue
 		}
-		if strings.Contains(lower, "@"+a) || strings.Contains(lower, a) {
+		if strings.Contains(lower, "@"+a) || containsToken(lower, a) {
+			return true
+		}
+	}
+	return false
+}
+
+func containsToken(text, token string) bool {
+	for _, f := range strings.FieldsFunc(text, func(r rune) bool {
+		return !(r >= 'a' && r <= 'z' || r >= '0' && r <= '9' || r == '_')
+	}) {
+		if f == token {
 			return true
 		}
 	}

@@ -128,12 +128,16 @@ func (h *Handler) handleBookingCoordination(ctx context.Context, v *events.Messa
 		GuestPhone: guest,
 		Status:     "awaiting_guest",
 	}
-	if err := h.store.InsertBookingRequest(req); err != nil {
+	reqID, err := h.store.InsertBookingRequest(req)
+	if err != nil {
 		_ = whatsapp.SendText(ctx, h.wa, v.Info.Chat, "Could not start booking request.")
 		return
 	}
 	guestJID := whatsapp.PhoneToJID(guest)
 	msg := "Hi — Vignesh asked me to help schedule a call. What days/times work for you this week? (e.g. Tue 3pm SGT)"
-	_ = whatsapp.SendText(ctx, h.wa, guestJID, msg)
-	_ = whatsapp.SendText(ctx, h.wa, v.Info.Chat, fmt.Sprintf("Started booking request %s with %s.", req.ID, guest))
+	if err := whatsapp.SendText(ctx, h.wa, guestJID, msg); err != nil {
+		_ = whatsapp.SendText(ctx, h.wa, v.Info.Chat, "Could not message the guest — please contact them directly or retry.")
+		return
+	}
+	_ = whatsapp.SendText(ctx, h.wa, v.Info.Chat, fmt.Sprintf("Started booking request %s with %s.", reqID, guest))
 }

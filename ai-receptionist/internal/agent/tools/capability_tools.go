@@ -28,10 +28,11 @@ func (t researchMarketingTool) Run(ctx context.Context, input string) (string, e
 		Payload:     fmt.Sprintf(`{"query":%q}`, strings.TrimSpace(input)),
 		NotifyOwner: true,
 	}
-	if err := rc.Deps.Store.InsertAsyncJob(job); err != nil {
+	jobID, err := rc.Deps.Store.InsertAsyncJob(job)
+	if err != nil {
 		return "", err
 	}
-	b, _ := json.Marshal(map[string]any{"queued": true, "job_id": job.ID, "message": "Research queued — I'll message Vignesh when ready."})
+	b, _ := json.Marshal(map[string]any{"queued": true, "job_id": jobID, "message": "Research queued — I'll message Vignesh when ready."})
 	return string(b), nil
 }
 
@@ -52,10 +53,11 @@ func (t scrapeLeadsTool) Run(ctx context.Context, input string) (string, error) 
 		Payload:     fmt.Sprintf(`{"source":%q}`, strings.TrimSpace(input)),
 		NotifyOwner: true,
 	}
-	if err := rc.Deps.Store.InsertAsyncJob(job); err != nil {
+	jobID, err := rc.Deps.Store.InsertAsyncJob(job)
+	if err != nil {
 		return "", err
 	}
-	b, _ := json.Marshal(map[string]any{"queued": true, "job_id": job.ID})
+	b, _ := json.Marshal(map[string]any{"queued": true, "job_id": jobID})
 	return string(b), nil
 }
 
@@ -74,15 +76,17 @@ func (t dispatchWebhookTool) Run(ctx context.Context, input string) (string, err
 	if url == "" {
 		return `{"dispatched":false,"reason":"no_webhook_url"}`, nil
 	}
-	// Minimal dispatch: enqueue as async job for reliability.
-	if rc.Deps.Store != nil {
-		job := AsyncJob{
-			ConvID:      rc.ConvID,
-			JobType:     "dispatch_webhook",
-			Payload:     fmt.Sprintf(`{"url":%q,"body":%q}`, url, strings.TrimSpace(input)),
-			NotifyOwner: false,
-		}
-		_ = rc.Deps.Store.InsertAsyncJob(job)
+	if rc.Deps.Store == nil {
+		return `{"dispatched":false,"reason":"no_store"}`, nil
+	}
+	job := AsyncJob{
+		ConvID:      rc.ConvID,
+		JobType:     "dispatch_webhook",
+		Payload:     fmt.Sprintf(`{"url":%q,"body":%q}`, url, strings.TrimSpace(input)),
+		NotifyOwner: false,
+	}
+	if _, err := rc.Deps.Store.InsertAsyncJob(job); err != nil {
+		return "", err
 	}
 	b, _ := json.Marshal(map[string]any{"dispatched": true, "url": url})
 	return string(b), nil
@@ -114,12 +118,14 @@ func (t emailCSVTool) Run(ctx context.Context, input string) (string, error) {
 
 	if rc.Deps.Store != nil {
 		payload, _ := json.Marshal(map[string]string{"csv_path": path, "note": strings.TrimSpace(input)})
-		_ = rc.Deps.Store.InsertAsyncJob(AsyncJob{
+		if _, err := rc.Deps.Store.InsertAsyncJob(AsyncJob{
 			ConvID:      rc.ConvID,
 			JobType:     "email_csv",
 			Payload:     string(payload),
 			NotifyOwner: true,
-		})
+		}); err != nil {
+			return "", err
+		}
 	}
 	b, _ := json.Marshal(map[string]any{"csv_path": path, "queued_email": true})
 	return string(b), nil

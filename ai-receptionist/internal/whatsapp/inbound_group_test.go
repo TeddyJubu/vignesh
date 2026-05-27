@@ -45,4 +45,18 @@ func TestGroupAllowlistAndMention(t *testing.T) {
 	if ok2 {
 		t.Fatal("expected skip without mention")
 	}
+
+	v3 := *v
+	v3.Message = &waE2E.Message{Conversation: proto.String("talking about julian")}
+	_, ok3 := ShouldProcessInbound(&v3, InboundFilter{
+		OwnerPhone:          "8809999",
+		ReplyToGroups:       true,
+		SupportGroupJIDs:    []string{groupJID.String()},
+		GroupReplyPolicy:    "mention_or_owner",
+		GroupMentionAliases: []string{"julia"},
+		Normalize:           func(s string) string { return s },
+	})
+	if ok3 {
+		t.Fatal("expected skip when alias is only a substring")
+	}
 }

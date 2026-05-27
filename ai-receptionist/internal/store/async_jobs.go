@@ -20,7 +20,7 @@ type AsyncJob struct {
 	UpdatedAt   time.Time
 }
 
-func (d *DB) InsertAsyncJob(job AsyncJob) error {
+func (d *DB) InsertAsyncJob(job AsyncJob) (string, error) {
 	if job.ID == "" {
 		job.ID = uuid.NewString()
 	}
@@ -36,14 +36,21 @@ func (d *DB) InsertAsyncJob(job AsyncJob) error {
 		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))`,
 		job.ID, job.ConvID, job.JobType, job.Status, job.Payload, job.Result, job.Error, notify,
 	)
-	return err
+	return job.ID, err
 }
 
+// ListPendingAsyncJobs atomically claims pending jobs by marking them running.
 func (d *DB) ListPendingAsyncJobs(limit int) ([]AsyncJob, error) {
 	if limit <= 0 {
 		limit = 10
 	}
-	rows, err := d.db.Query(
+	tx, err := d.db.Begin()
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	rows, err := tx.Query(
 		`SELECT id, conv_id, job_type, status, payload, result, error, notify_owner, created_at, updated_at
 		 FROM async_jobs WHERE status = 'pending' ORDER BY created_at ASC LIMIT ?`,
 		limit,
@@ -51,8 +58,30 @@ func (d *DB) ListPendingAsyncJobs(limit int) ([]AsyncJob, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-	return scanAsyncJobs(rows)
+	jobs, err := scanAsyncJobs(rows)
+	rows.Close()
+	if err != nil {
+		return nil, err
+	}
+	var claimed []AsyncJob
+	for _, j := range jobs {
+		res, err := tx.Exec(
+			`UPDATE async_jobs SET status = 'running', updated_at = datetime('now') WHERE id = ? AND status = 'pending'`,
+			j.ID,
+		)
+		if err != nil {
+			return nil, err
+		}
+		n, _ := res.RowsAffected()
+		if n > 0 {
+			j.Status = "running"
+			claimed = append(claimed, j)
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+	return claimed, nil
 }
 
 func (d *DB) UpdateAsyncJobStatus(id, status, result, errMsg string) error {

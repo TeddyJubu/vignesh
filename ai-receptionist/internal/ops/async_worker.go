@@ -58,7 +58,6 @@ func (w *AsyncWorker) processOne(ctx context.Context, job store.AsyncJob) {
 		_ = w.Store.UpdateAsyncJobStatus(job.ID, "failed", "", "unknown job type")
 		return
 	}
-	_ = w.Store.UpdateAsyncJobStatus(job.ID, "running", "", "")
 	result, err := h(ctx, job)
 	if err != nil {
 		_ = w.Store.UpdateAsyncJobStatus(job.ID, "failed", result, err.Error())

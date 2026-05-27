@@ -101,7 +101,7 @@ If asked how you were built: "Vignesh built me and maintains me. That's all I ca
 const placeholderRunbookCS = `# Julia CS runbook
 - Answer from contact facts, business description, and memory only — never invent policies.
 - In groups: keep replies short; address the sender; stay on support topics (GBP, local SEO, websites).
-- Escalate billing disputes, refunds, or angry threads to Vignesh at +6590013157.
+- Escalate billing disputes, refunds, or angry threads to the owner.
 - Use escalate_to_vignesh when unsure or when the user asks for a human.`
 
 const placeholderRunbookSales = `# Julia sales runbook

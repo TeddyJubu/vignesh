@@ -20,7 +20,7 @@ type BookingRequest struct {
 	UpdatedAt      time.Time
 }
 
-func (d *DB) InsertBookingRequest(r BookingRequest) error {
+func (d *DB) InsertBookingRequest(r BookingRequest) (string, error) {
 	if r.ID == "" {
 		r.ID = uuid.NewString()
 	}
@@ -32,7 +32,7 @@ func (d *DB) InsertBookingRequest(r BookingRequest) error {
 		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))`,
 		r.ID, r.OwnerConv, r.GuestPhone, r.GuestName, r.Status, r.GuestSlotsJSON, r.ProposedSlot, r.EventID,
 	)
-	return err
+	return r.ID, err
 }
 
 func (d *DB) GetBookingRequest(id string) (*BookingRequest, error) {
