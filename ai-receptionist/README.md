@@ -69,7 +69,10 @@ UPDATE agent_notes SET content = '...' WHERE key = 'identity_soul';
 Environment overrides:
 
 - `WHATSMEOW_DB` — default `whatsmeow.db`
-- `APP_DB` — default `database.db`
+- `APP_DB` — default `database.db` (settings, dream proposals, conversations)
+- `HTTP_ADDR` — enable dashboard/API (default off; use `127.0.0.1:8080`)
+- `GRAPHITI_URL` — Graphiti sidecar base URL for memory ingest/recall and dream drafts (e.g. `http://127.0.0.1:8333`; see `graphiti/README.md`)
+- `MEMORY_RECALL_IN_PROMPT` — set `1` to inject Graphiti recall into the WhatsApp prompt
 - `CONFIG_PATH`, `PROMPT_PATH`, `INSTRUCTIONS_PATH` (default `knowledge/instructions.md`)
 - `AI_PROVIDER` — `ollama` (default) or `openai`
 - `OPENAI_API_KEY`, `OPENAI_BASE_URL` (default `https://sg.api.openai.com`), `OPENAI_MODEL`

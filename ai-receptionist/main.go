@@ -42,6 +42,7 @@ func main() {
 	whatsmeowDB := envOr("WHATSMEOW_DB", "whatsmeow.db")
 	appDB := envOr("APP_DB", "database.db")
 	httpAddr := strings.TrimSpace(os.Getenv("HTTP_ADDR"))
+	graphitiURL := strings.TrimSpace(os.Getenv("GRAPHITI_URL"))
 
 	cfg, err := config.Load(configPath)
 	if err != nil {
@@ -100,7 +101,7 @@ func main() {
 	var api *httpapi.Server
 	if httpAddr != "" {
 		distDir := envOr("DASHBOARD_DIST", "dashboard/dist")
-		api = httpapi.New(cfg, appStore, distDir)
+		api = httpapi.New(cfg, appStore, distDir, graphitiURL)
 		go func() {
 			fmt.Println("HTTP API listening on", httpAddr)
 			if err := api.Start(ctx, httpAddr); err != nil {

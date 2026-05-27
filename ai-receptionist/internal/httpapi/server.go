@@ -3,6 +3,8 @@ package httpapi
 import (
 	"context"
 	"encoding/json"
+	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"os"
@@ -11,13 +13,14 @@ import (
 	"strings"
 	"time"
 
-
 	"ai-receptionist/internal/ai"
 	"ai-receptionist/internal/config"
 	"ai-receptionist/internal/memory"
 	"ai-receptionist/internal/settings"
 	"ai-receptionist/internal/store"
 	"ai-receptionist/internal/tools/composio"
+
+	"github.com/google/uuid"
 )
 
 type Server struct {
@@ -302,4 +305,167 @@ func DefaultAddr() string {
 		return v
 	}
 	return "127.0.0.1:8080"
+}
+
+func (s *Server) handleDreamPropose(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	var body memory.DreamProposeRequest
+	if err := readJSON(r, &body); err != nil {
+		writeJSON(w, 400, map[string]any{"error": err.Error()})
+		return
+	}
+	if strings.TrimSpace(body.ConvID) == "" {
+		writeJSON(w, 400, map[string]any{"error": "conv_id required"})
+		return
+	}
+
+	var (
+		id        string
+		status    string
+		title     string
+		rationale string
+		patch     map[string]any
+	)
+	if s.graphiti != nil && s.graphiti.Enabled() {
+		ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+		defer cancel()
+		resp, err := s.graphiti.ProposeDream(ctx, body)
+		if err != nil {
+			writeJSON(w, 502, map[string]any{"error": err.Error()})
+			return
+		}
+		id = resp.ID
+		status = resp.Status
+		title = resp.Title
+		rationale = resp.Rationale
+		patch = resp.Patch
+	} else {
+		id = newDreamID()
+		status = "proposed"
+		title = strings.TrimSpace(body.Title)
+		if title == "" {
+			title = "Dream proposal"
+		}
+		rationale = strings.TrimSpace(body.Rationale)
+		if rationale == "" {
+			rationale = "Draft proposal (Graphiti sidecar not configured)."
+		}
+		patch = body.Patch
+		if len(patch) == 0 {
+			patch = map[string]any{
+				"target_key":  "identity_soul",
+				"new_content": "DRAFT: (fill in) Proposed update.",
+			}
+		}
+	}
+
+	patchJSON, err := normalizeDreamPatch(patch)
+	if err != nil {
+		writeJSON(w, 400, map[string]any{"error": "invalid patch"})
+		return
+	}
+	if strings.TrimSpace(status) == "" {
+		status = "proposed"
+	}
+	if err := s.store.InsertDreamProposal(store.DreamProposal{
+		ID:        id,
+		Status:    status,
+		Title:     title,
+		Patch:     patchJSON,
+		Rationale: rationale,
+	}); err != nil {
+		writeJSON(w, 500, map[string]any{"error": err.Error()})
+		return
+	}
+	writeJSON(w, 200, map[string]any{"id": id, "status": status})
+}
+
+func newDreamID() string {
+	return uuid.NewString()
+}
+
+func normalizeDreamPatch(patch map[string]any) (string, error) {
+	if patch == nil {
+		patch = map[string]any{}
+	}
+	if _, ok := patch["target_key"]; !ok {
+		if t, ok := patch["target"].(string); ok && strings.TrimSpace(t) != "" {
+			patch["target_key"] = t
+			delete(patch, "target")
+		}
+	}
+	if _, ok := patch["new_content"]; !ok {
+		if c, ok := patch["content"].(string); ok {
+			patch["new_content"] = c
+			delete(patch, "content")
+		}
+	}
+	b, err := json.Marshal(patch)
+	if err != nil {
+		return "", err
+	}
+	if strings.TrimSpace(string(b)) == "{}" || strings.TrimSpace(string(b)) == "null" {
+		return "", fmt.Errorf("empty patch")
+	}
+	return string(b), nil
+}
+
+func (s *Server) handleMemoryIngest(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	if s.graphiti == nil || !s.graphiti.Enabled() {
+		writeJSON(w, 502, map[string]any{"error": "GRAPHITI_URL not configured"})
+		return
+	}
+	b, err := io.ReadAll(io.LimitReader(r.Body, 1<<20))
+	if err != nil {
+		writeJSON(w, 400, map[string]any{"error": "read body"})
+		return
+	}
+	req, err := http.NewRequestWithContext(r.Context(), http.MethodPost, strings.TrimRight(s.graphiti.BaseURL(), "/")+"/ingest", strings.NewReader(string(b)))
+	if err != nil {
+		writeJSON(w, 502, map[string]any{"error": "build request"})
+		return
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := s.graphiti.HTTPClient().Do(req)
+	if err != nil {
+		writeJSON(w, 502, map[string]any{"error": "graphiti unreachable"})
+		return
+	}
+	defer resp.Body.Close()
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(resp.StatusCode)
+	_, _ = io.Copy(w, io.LimitReader(resp.Body, 1<<20))
+}
+
+func (s *Server) handleMemoryRecall(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	if s.graphiti == nil || !s.graphiti.Enabled() {
+		writeJSON(w, 502, map[string]any{"error": "GRAPHITI_URL not configured"})
+		return
+	}
+	u := strings.TrimRight(s.graphiti.BaseURL(), "/") + "/recall?" + r.URL.Query().Encode()
+	req, err := http.NewRequestWithContext(r.Context(), http.MethodGet, u, nil)
+	if err != nil {
+		writeJSON(w, 502, map[string]any{"error": "build request"})
+		return
+	}
+	resp, err := s.graphiti.HTTPClient().Do(req)
+	if err != nil {
+		writeJSON(w, 502, map[string]any{"error": "graphiti unreachable"})
+		return
+	}
+	defer resp.Body.Close()
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(resp.StatusCode)
+	_, _ = io.Copy(w, io.LimitReader(resp.Body, 1<<20))
 }

@@ -4,6 +4,7 @@ from typing import Iterable
 
 
 def db_path() -> str:
+    # Episodic ingest/recall fallback only. Dream proposals and app settings live in APP_DB (Go store).
     return os.getenv("GRAPHITI_SQLITE_PATH", "graphiti_sidecar.db")
 
 
@@ -27,16 +28,6 @@ SCHEMA: Iterable[str] = [
     """
     CREATE INDEX IF NOT EXISTS idx_memory_events_conv_created
       ON memory_events (conv_id, created_at);
-    """,
-    """
-    CREATE TABLE IF NOT EXISTS dream_proposals (
-      id TEXT PRIMARY KEY,
-      created_at TEXT NOT NULL,
-      status TEXT NOT NULL,
-      title TEXT NOT NULL,
-      patch TEXT NOT NULL,
-      rationale TEXT NOT NULL
-    );
     """,
 ]
 

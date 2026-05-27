@@ -48,6 +48,21 @@ type RecallResponse struct {
 	Snippet string       `json:"snippet"`
 }
 
+type DreamProposeRequest struct {
+	ConvID    string         `json:"conv_id"`
+	Title     string         `json:"title,omitempty"`
+	Rationale string         `json:"rationale,omitempty"`
+	Patch     map[string]any `json:"patch,omitempty"`
+}
+
+type DreamProposeResponse struct {
+	ID        string         `json:"id"`
+	Status    string         `json:"status"`
+	Title     string         `json:"title"`
+	Rationale string         `json:"rationale"`
+	Patch     map[string]any `json:"patch"`
+}
+
 func (c *Client) Enabled() bool {
 	return c != nil && strings.TrimSpace(c.baseURL) != ""
 }
@@ -123,6 +138,38 @@ func (c *Client) Recall(ctx context.Context, convID, q string, limit int) (*Reca
 	var out RecallResponse
 	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
 		return nil, err
+	}
+	return &out, nil
+}
+
+func (c *Client) ProposeDream(ctx context.Context, req DreamProposeRequest) (*DreamProposeResponse, error) {
+	if !c.Enabled() {
+		return nil, fmt.Errorf("graphiti base url not set")
+	}
+	b, err := json.Marshal(req)
+	if err != nil {
+		return nil, err
+	}
+	httpReq, err := http.NewRequestWithContext(ctx, "POST", c.baseURL+"/dreams/propose", bytes.NewReader(b))
+	if err != nil {
+		return nil, err
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+	resp, err := c.http.Do(httpReq)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode/100 != 2 {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		return nil, fmt.Errorf("graphiti propose status=%d body=%q", resp.StatusCode, string(body))
+	}
+	var out DreamProposeResponse
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		return nil, err
+	}
+	if strings.TrimSpace(out.ID) == "" {
+		return nil, fmt.Errorf("graphiti propose: empty id")
 	}
 	return &out, nil
 }

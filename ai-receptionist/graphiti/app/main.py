@@ -5,10 +5,10 @@ import uuid
 from contextlib import asynccontextmanager
 from typing import Optional
 
-from fastapi import BackgroundTasks, FastAPI, HTTPException, Query, Request
+from fastapi import FastAPI, Query, Request
 
 from .db import connect, init_schema
-from .graphiti_client import GraphitiState, init_graphiti, now_rfc3339
+from .graphiti_client import GraphitiState, init_graphiti
 from .models import (
     DreamProposeRequest,
     DreamProposeResponse,
@@ -130,34 +130,19 @@ async def recall(
     return RecallResponse(items=items, snippet=snippet)
 
 
-def _insert_dream(conn, title: str, patch: dict, rationale: str) -> str:
-    pid = str(uuid.uuid4())
-    conn.execute(
-        "INSERT INTO dream_proposals (id, created_at, status, title, patch, rationale) VALUES (?, ?, ?, ?, ?, ?)",
-        (pid, now_rfc3339(), "proposed", title, json.dumps(patch, ensure_ascii=False), rationale),
-    )
-    conn.commit()
-    return pid
-
-
-def _dream_background(conn, title: str, patch: dict, rationale: str):
-    _insert_dream(conn, title, patch, rationale)
-
-
 @app.post("/dreams/propose", response_model=DreamProposeResponse)
-async def dreams_propose(request: Request, body: DreamProposeRequest, bg: BackgroundTasks):
-    # “Background job or endpoint”: keep it endpoint-driven; do work in background.
-    conn = request.app.state.db
+async def dreams_propose(body: DreamProposeRequest):
+    # Stateless draft; Go persists into APP_DB (database.db).
     if not body.patch:
-        # Minimal default patch shape so UI/go can store something meaningful.
-        body.patch = {"target": "identity_soul", "content": "DRAFT: (fill in) Proposed update."}
-    pid = str(uuid.uuid4())
-    bg.add_task(
-        _dream_background,
-        conn,
-        body.title,
-        body.patch,
-        body.rationale,
+        body.patch = {
+            "target_key": "identity_soul",
+            "new_content": "DRAFT: (fill in) Proposed update.",
+        }
+    return DreamProposeResponse(
+        id=str(uuid.uuid4()),
+        status="proposed",
+        title=body.title,
+        rationale=body.rationale,
+        patch=body.patch,
     )
-    return DreamProposeResponse(id=pid, status="queued")
 

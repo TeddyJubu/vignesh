@@ -34,5 +34,8 @@ class DreamProposeRequest(BaseModel):
 
 class DreamProposeResponse(BaseModel):
     id: str
-    status: str
+    status: str = "proposed"
+    title: str
+    rationale: str
+    patch: dict[str, Any]
 
