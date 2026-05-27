@@ -24,6 +24,14 @@ func NewOpenAIProvider(model, baseURL string) (*OpenAIProvider, error) {
 	if key == "" {
 		return nil, fmt.Errorf("OPENAI_API_KEY is not set")
 	}
+	return NewOpenAIProviderWithKey(model, baseURL, key)
+}
+
+func NewOpenAIProviderWithKey(model, baseURL, apiKey string) (*OpenAIProvider, error) {
+	key := strings.TrimSpace(apiKey)
+	if key == "" {
+		return nil, fmt.Errorf("OPENAI_API_KEY is not set")
+	}
 	if strings.TrimSpace(model) == "" {
 		model = "gpt-4.1-mini"
 	}
