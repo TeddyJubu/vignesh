@@ -16,6 +16,7 @@ import (
 	"ai-receptionist/internal/ai"
 	"ai-receptionist/internal/config"
 	"ai-receptionist/internal/lead"
+	"ai-receptionist/internal/memory"
 	"ai-receptionist/internal/ops"
 	"ai-receptionist/internal/store"
 	"ai-receptionist/internal/webhook"
@@ -39,12 +40,14 @@ type Handler struct {
 	promptBuilder  *PromptBuilder
 	toolReg        *tools.Registry
 	calendar       calendar.Calendar
+	graphiti       *memory.Client
 
 	chatLocks *convCache
 	ackMu     sync.Mutex
 }
 
 func New(cfg *config.Config, db *store.DB, aiClient ai.Provider, wa *whatsapp.Client, promptTpl, styleExtra, instructionsMD string) *Handler {
+	graphitiURL := strings.TrimSpace(os.Getenv("GRAPHITI_URL"))
 	h := &Handler{
 		cfg:            cfg,
 		store:          db,
@@ -56,6 +59,7 @@ func New(cfg *config.Config, db *store.DB, aiClient ai.Provider, wa *whatsapp.Cl
 		promptBuilder:  NewPromptBuilder(cfg, db, instructionsMD),
 		toolReg:        tools.DefaultRegistry(),
 		calendar:       calendar.New(),
+		graphiti:       memory.NewClient(graphitiURL),
 		chatLocks:      newConvCache(),
 	}
 	h.debouncer = NewDebouncer(cfg.DebounceSeconds, h.handleDebounced)
@@ -567,6 +571,20 @@ func (h *Handler) buildSystemPrompt(convID string, leadData map[string]string, i
 		b.WriteString("\n\n## Style examples\n")
 		b.WriteString(h.styleExtra)
 		b.WriteString("\n")
+	}
+	if os.Getenv("MEMORY_RECALL_IN_PROMPT") == "1" && h.graphiti != nil && h.graphiti.Enabled() {
+		recallCtx, cancel := context.WithTimeout(context.Background(), 600*time.Millisecond)
+		defer cancel()
+		if rr, err := h.graphiti.Recall(recallCtx, convID, "", 5); err == nil && rr != nil && strings.TrimSpace(rr.Snippet) != "" {
+			b.WriteString("\n\n## Recall (memory)\n")
+			// Bound recall snippet size defensively (service also bounds).
+			snip := strings.TrimSpace(rr.Snippet)
+			if len(snip) > 1800 {
+				snip = snip[:1800]
+			}
+			b.WriteString(snip)
+			b.WriteString("\n")
+		}
 	}
 	if language != "" {
 		b.WriteString("\n\n## Language\n")

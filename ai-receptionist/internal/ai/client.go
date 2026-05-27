@@ -31,17 +31,26 @@ func NewClient(model string) (*Client, error) {
 	if key == "" {
 		return nil, fmt.Errorf("OLLAMA_API_KEY is not set (create one at https://ollama.com/settings/keys)")
 	}
+	url := strings.TrimSpace(os.Getenv("OLLAMA_API_URL"))
+	return NewClientWithConfig(model, key, url)
+}
+
+func NewClientWithConfig(model, apiKey, apiURL string) (*Client, error) {
+	apiKey = strings.TrimSpace(apiKey)
+	if apiKey == "" {
+		return nil, fmt.Errorf("OLLAMA_API_KEY is not set (create one at https://ollama.com/settings/keys)")
+	}
 	if strings.TrimSpace(model) == "" {
 		model = defaultModel
 	}
-	url := strings.TrimSpace(os.Getenv("OLLAMA_API_URL"))
-	if url == "" {
-		url = defaultOllamaChatURL
+	apiURL = strings.TrimSpace(apiURL)
+	if apiURL == "" {
+		apiURL = defaultOllamaChatURL
 	}
 	return &Client{
 		model:  model,
-		apiKey: key,
-		apiURL: url,
+		apiKey: apiKey,
+		apiURL: apiURL,
 		http:   &http.Client{Timeout: 180 * time.Second},
 	}, nil
 }
