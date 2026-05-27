@@ -18,7 +18,8 @@ var (
 	modelDisclosure = regexp.MustCompile(`(?i)(large language model|language model|trained by google|trained by openai|gemini|gpt-|chatgpt|i am an ai|i'm an ai|your ai assistant|as an ai assistant|google's ai)`)
 	internalLeak    = regexp.MustCompile(`(?i)(new qualified lead|recent tools:|recent messages:|julia escalation|conv:|conversation id|idempotency_key|tool outputs|notify_owner|paused_until)`)
 	jsonBlob        = regexp.MustCompile(`(?s)\{[^{}]*"(?:booked|escalated|available|slots|email|timezone)"[^{}]*\}`)
-	invalidSlot     = regexp.MustCompile(`(?i)\b(?:mon|tue|wed|thu|fri|sat|sun)\s+\d{2,}(?:am|pm)\b`)
+	// Impossible 12-hour clock values only (e.g. Fri 37am), not valid two-digit hours like 10am/11am/12pm.
+	invalidSlot = regexp.MustCompile(`(?i)\b(?:mon|tue|wed|thu|fri|sat|sun)\s+(?:1[3-9]|[2-9]\d|\d{3,})(?:am|pm)\b`)
 	multiQuestion   = regexp.MustCompile(`\?`)
 )
 

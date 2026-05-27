@@ -75,3 +75,26 @@ func TestFinalizeCustomerReply_invalidSlots(t *testing.T) {
 		t.Fatalf("invalid slots not stripped: %q", out)
 	}
 }
+
+func TestFinalizeCustomerReply_validTwoDigitSlots(t *testing.T) {
+	out := FinalizeCustomerReply(
+		"Fri 10am and Fri 11am work, or Fri 12pm if you prefer.",
+		"book",
+		"Teddy",
+		"websites",
+		nil,
+	)
+	if !strings.Contains(out, "10am") || !strings.Contains(out, "12pm") {
+		t.Fatalf("valid two-digit slots were stripped: %q", out)
+	}
+}
+
+func TestCustomerSafeToolOutput_keepsValidTwoDigitSlots(t *testing.T) {
+	out := CustomerSafeToolOutput("check_calendar_availability", `{"slots":["Fri 10am","Fri 37am","Fri 12pm"]}`)
+	if !strings.Contains(out, "Fri 10am") || !strings.Contains(out, "Fri 12pm") {
+		t.Fatalf("valid slots removed: %s", out)
+	}
+	if strings.Contains(out, "37am") {
+		t.Fatalf("invalid slot kept: %s", out)
+	}
+}
