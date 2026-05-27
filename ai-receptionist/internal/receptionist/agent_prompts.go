@@ -19,6 +19,9 @@ func buildPlannerMessages(msgs []ai.ChatMessage, structured bool, reg *tools.Reg
 	b.WriteString("- If you need missing info from the user, put it in questions[] and keep agents[] empty.\n")
 	b.WriteString("- questions[] MUST be written in Julia's voice (warm, concise WhatsApp tone), not as a meta/planner.\n")
 	b.WriteString("- If the user asks who you are / your name, answer plainly: \"I'm Julia\" + one short line about purpose.\n")
+	b.WriteString("- Never ask for email before the user has given a preferred day, time, and timezone for a call.\n")
+	b.WriteString("- For \"what services\" questions, answer from the business description — never repeat the user's question.\n")
+	b.WriteString("- questions[] must contain exactly ONE question mark total.\n")
 	b.WriteString("- Max 4 agents.\n")
 	b.WriteString("- Use registered tools only.\n")
 	if structured {
@@ -59,7 +62,11 @@ func buildPlannerRepairMessages(invalid string, structured bool, reg *tools.Regi
 
 func buildCollationMessages(plan *agent.Plan, answers map[string]string, results []agent.ToolResult, structured bool) []ai.ChatMessage {
 	var b strings.Builder
-	b.WriteString("You are a collation agent. Use the plan, user answers, and tool outputs to produce the final reply.\n")
+	b.WriteString("You are a collation agent for Julia (WhatsApp receptionist). Use the plan and user answers to produce the final customer-facing reply.\n")
+	b.WriteString("CRITICAL: Never paste tool JSON, conversation IDs, internal alerts, escalation dumps, or owner-only summaries into the reply.\n")
+	b.WriteString("Never say you are a generic AI assistant or disclose model/provider. You are Julia.\n")
+	b.WriteString("Booking: ask day + time + timezone before email; only confirm booking if book_appointment returned booked:true.\n")
+	b.WriteString("Keep reply under 3 short lines and at most ONE question.\n")
 	if structured {
 		b.WriteString("Return ONLY a single JSON object compatible with this schema:\n")
 		b.WriteString(`{"reply":"string","lead_updates":{"key":"value"},"qualified":false,"summary":"string"}` + "\n")
@@ -81,8 +88,13 @@ func buildCollationMessages(plan *agent.Plan, answers map[string]string, results
 			b.WriteString("\n")
 		}
 	}
-	b.WriteString("\nTool outputs:\n")
-	j, _ := json.Marshal(results)
+	b.WriteString("\nTool outputs (internal — summarize for customer, do not copy verbatim):\n")
+	safe := make([]agent.ToolResult, len(results))
+	for i, r := range results {
+		safe[i] = r
+		safe[i].Output = CustomerSafeToolOutput(r.Tool, r.Output)
+	}
+	j, _ := json.Marshal(safe)
 	b.Write(j)
 	b.WriteString("\n")
 

@@ -91,7 +91,7 @@ func suggestFreeSlots(start, end time.Time, busy []*calendar.TimePeriod, loc *ti
 		}
 		slotEnd := cursor.Add(30 * time.Minute)
 		if !overlapsBusy(cursor, slotEnd, blocks) {
-			slots = append(slots, cursor.Format("Mon 3:04pm"))
+			slots = append(slots, formatHumanSlot(cursor))
 			cursor = cursor.Add(90 * time.Minute)
 			continue
 		}

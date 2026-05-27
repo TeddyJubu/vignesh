@@ -46,9 +46,9 @@ func (s *stubCalendar) CheckAvailability(ctx context.Context, input string) (str
 	_ = ctx
 	now := time.Now().In(s.tz)
 	slots := []string{
-		now.Add(24 * time.Hour).Format("Mon 3pm"),
-		now.Add(26 * time.Hour).Format("Mon 5pm"),
-		now.Add(72 * time.Hour).Format("Fri 11am"),
+		formatHumanSlot(now.Add(24 * time.Hour)),
+		formatHumanSlot(now.Add(26 * time.Hour)),
+		formatHumanSlot(now.Add(72 * time.Hour)),
 	}
 	b, _ := json.Marshal(map[string]any{
 		"available": true,

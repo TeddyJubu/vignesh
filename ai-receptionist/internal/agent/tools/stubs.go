@@ -151,7 +151,11 @@ func (t escalateTool) Run(ctx context.Context, input string) (string, error) {
 	if err := store.PauseContact(rc.ConvID, until); err != nil {
 		return "", err
 	}
-	out, _ := json.Marshal(map[string]any{"escalated": true, "paused_until": until.Format(time.RFC3339)})
+	out, _ := json.Marshal(map[string]any{
+		"escalated":        true,
+		"customer_message": "I've flagged this for Vignesh — he'll follow up with you shortly.",
+		"paused_until":     until.Format(time.RFC3339),
+	})
 	return string(out), nil
 }
 
