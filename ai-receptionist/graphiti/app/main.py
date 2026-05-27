@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import uuid
 from contextlib import asynccontextmanager
+from datetime import datetime, timezone
 from typing import Optional
 
 from fastapi import FastAPI, Query, Request
@@ -41,6 +42,13 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="ai-receptionist Graphiti sidecar", version="0.1.0", lifespan=lifespan)
 
 
+def _parse_reference_time(ts: str) -> datetime:
+    try:
+        return datetime.fromisoformat(ts.replace("Z", "+00:00"))
+    except ValueError:
+        return datetime.now(timezone.utc)
+
+
 @app.get("/health")
 async def health(request: Request):
     g: GraphitiState = request.app.state.graphiti
@@ -68,11 +76,12 @@ async def ingest(request: Request, body: IngestRequest):
             from graphiti_core.nodes import EpisodeType  # type: ignore
 
             await g.client.add_episode(  # type: ignore[attr-defined]
-                name=f"{body.conv_id}:{body.role}",
+                name=f"{body.conv_id}:{body.role}:{body.timestamp}",
                 episode_body=body.text,
                 source=EpisodeType.text,
                 source_description="ai-receptionist turn event",
-                reference_time=None,
+                reference_time=_parse_reference_time(body.timestamp),
+                group_id=body.conv_id,
             )
         except Exception:
             # Keep ingest robust; SQLite is authoritative for sidecar even if graphiti fails.
@@ -114,7 +123,11 @@ async def recall(
     if g.enabled and g.client is not None and q.strip():
         try:
             # Graphiti search APIs can evolve; keep this best-effort and fall back.
-            results = await g.client.search(q.strip())  # type: ignore[attr-defined]
+            results = await g.client.search(  # type: ignore[attr-defined]
+                q.strip(),
+                group_ids=[conv_id],
+                num_results=limit,
+            )
             for r in (results or [])[:limit]:
                 text = getattr(r, "fact", None) or getattr(r, "text", None) or str(r)
                 score = float(getattr(r, "score", 0.0) or 0.0)
