@@ -33,7 +33,6 @@ func NewOpenAIProvider(model, baseURL string) (*OpenAIProvider, error) {
 	c := openai.NewClient(
 		option.WithAPIKey(key),
 		option.WithBaseURL(baseURL),
-		// Keep retries modest; handler enforces strict ctx timeouts.
 		option.WithMaxRetries(2),
 	)
 	return &OpenAIProvider{client: c, model: model, baseURL: baseURL}, nil
@@ -49,11 +48,19 @@ func (p *OpenAIProvider) Ping(ctx context.Context) error {
 }
 
 func (p *OpenAIProvider) Complete(ctx context.Context, messages []ChatMessage, jsonMode bool) (string, error) {
-	input := openAIInputFromChat(messages, jsonMode)
-	stream := p.client.Responses.NewStreaming(ctx, responses.ResponseNewParams{
+	items := openAIInputItems(messages)
+	params := responses.ResponseNewParams{
 		Model: openai.ChatModel(p.model),
-		Input: responses.ResponseNewParamsInputUnion{OfString: openai.String(input)},
-	})
+		Input: responses.ResponseNewParamsInputUnion{OfInputItemList: items},
+	}
+	if jsonMode {
+		params.Instructions = openai.String(
+			"Return ONLY a single JSON object matching: " +
+				`{"reply":"string","lead_updates":{},"qualified":false,"summary":"string"}` +
+				"\nDo not wrap in markdown fences.",
+		)
+	}
+	stream := p.client.Responses.NewStreaming(ctx, params)
 	var b strings.Builder
 	for stream.Next() {
 		ev := stream.Current()
@@ -71,28 +78,22 @@ func (p *OpenAIProvider) Complete(ctx context.Context, messages []ChatMessage, j
 	return out, nil
 }
 
-func openAIInputFromChat(messages []ChatMessage, jsonMode bool) string {
-	// Keep minimal: pack into a single prompt string. This preserves existing system/user/assistant roles
-	// without mapping into the Responses structured "input_items" schema.
-	var b strings.Builder
-	if jsonMode {
-		b.WriteString("Return ONLY a single JSON object matching this schema:\n")
-		b.WriteString(`{"reply":"string","lead_updates":{"key":"value"},"qualified":true,"summary":"string"}` + "\n")
-		b.WriteString("Do not wrap in markdown fences.\n\n")
-	}
+func openAIInputItems(messages []ChatMessage) responses.ResponseInputParam {
+	items := make(responses.ResponseInputParam, 0, len(messages))
 	for _, m := range messages {
-		role := strings.ToLower(strings.TrimSpace(m.Role))
-		switch role {
-		case "system":
-			b.WriteString("[system]\n")
-		case "assistant":
-			b.WriteString("[assistant]\n")
-		default:
-			b.WriteString("[user]\n")
-		}
-		b.WriteString(m.Content)
-		b.WriteString("\n\n")
+		role := mapOpenAIRole(m.Role)
+		items = append(items, responses.ResponseInputItemParamOfMessage(m.Content, role))
 	}
-	return strings.TrimSpace(b.String())
+	return items
 }
 
+func mapOpenAIRole(role string) responses.EasyInputMessageRole {
+	switch strings.ToLower(strings.TrimSpace(role)) {
+	case "system":
+		return responses.EasyInputMessageRoleSystem
+	case "assistant":
+		return responses.EasyInputMessageRoleAssistant
+	default:
+		return responses.EasyInputMessageRoleUser
+	}
+}

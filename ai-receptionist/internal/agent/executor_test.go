@@ -4,6 +4,8 @@ import (
 	"context"
 	"testing"
 	"time"
+
+	"ai-receptionist/internal/agent/tools"
 )
 
 func TestRunToolsParallel_FanoutAndCollect(t *testing.T) {
@@ -13,7 +15,8 @@ func TestRunToolsParallel_FanoutAndCollect(t *testing.T) {
 		{Name: "calendar", Tool: "check_calendar_availability", Input: "next week"},
 		{Name: "tz", Tool: "align_time", Input: "SG"},
 	}
-	out := RunToolsParallel(ctx, tasks)
+	rc := tools.RunContext{ConvID: "6590000000"}
+	out := RunToolsParallel(ctx, rc, tasks)
 	if len(out) != 2 {
 		t.Fatalf("len=%d", len(out))
 	}
@@ -27,7 +30,7 @@ func TestRunToolsParallel_FanoutAndCollect(t *testing.T) {
 
 func TestRunToolsParallel_UnknownTool(t *testing.T) {
 	ctx := context.Background()
-	out := RunToolsParallel(ctx, []AgentTask{{Name: "x", Tool: "does_not_exist", Input: "a"}})
+	out := RunToolsParallel(ctx, tools.RunContext{ConvID: "6590000000"}, []AgentTask{{Name: "x", Tool: "does_not_exist", Input: "a"}})
 	if len(out) != 1 {
 		t.Fatalf("len=%d", len(out))
 	}
@@ -35,4 +38,3 @@ func TestRunToolsParallel_UnknownTool(t *testing.T) {
 		t.Fatalf("expected error, got %+v", out[0])
 	}
 }
-

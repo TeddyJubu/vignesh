@@ -21,6 +21,7 @@ type Contact struct {
 	LeadData          map[string]string
 	LeadDataRaw       string
 	Status            string
+	Mode              string
 	StatusBeforePause string
 	PausedUntil       *time.Time
 	Language          string
@@ -44,7 +45,11 @@ type DB struct {
 }
 
 func Open(path string) (*DB, error) {
-	db, err := sql.Open("sqlite3", path)
+	dsn := path
+	if path == ":memory:" {
+		dsn = "file:ai_receptionist_test?mode=memory&cache=shared"
+	}
+	db, err := sql.Open("sqlite3", dsn)
 	if err != nil {
 		return nil, err
 	}
@@ -79,7 +84,7 @@ func (d *DB) GetOrCreateContact(phone string) (*Contact, error) {
 }
 
 const contactSelect = `SELECT id, phone, name, lead_data, status,
-	COALESCE(status_before_pause, ''), COALESCE(paused_until, ''), COALESCE(language, ''), COALESCE(lead_score, ''),
+	COALESCE(mode, ''), COALESCE(status_before_pause, ''), COALESCE(paused_until, ''), COALESCE(language, ''), COALESCE(lead_score, ''),
 	COALESCE(last_bot_reply_at, ''), COALESCE(webhook_sent_at, ''), created_at, last_message_at FROM contacts WHERE phone = ?`
 
 func (d *DB) GetContact(phone string) (*Contact, error) {
@@ -90,7 +95,7 @@ func (d *DB) GetContact(phone string) (*Contact, error) {
 func scanContact(row *sql.Row) (*Contact, error) {
 	var c Contact
 	var leadRaw, pausedRaw, lastBotRaw, webhookRaw, created, last string
-	if err := row.Scan(&c.ID, &c.Phone, &c.Name, &leadRaw, &c.Status,
+	if err := row.Scan(&c.ID, &c.Phone, &c.Name, &leadRaw, &c.Status, &c.Mode,
 		&c.StatusBeforePause, &pausedRaw, &c.Language, &c.LeadScore, &lastBotRaw, &webhookRaw, &created, &last); err != nil {
 		return nil, err
 	}
@@ -234,6 +239,14 @@ func (d *DB) SetContactLanguage(phone, lang string) error {
 	_, err := d.db.Exec(
 		`UPDATE contacts SET language = ? WHERE phone = ?`,
 		lang, phone,
+	)
+	return err
+}
+
+func (d *DB) SetContactMode(phone, mode string) error {
+	_, err := d.db.Exec(
+		`UPDATE contacts SET mode = ? WHERE phone = ?`,
+		mode, phone,
 	)
 	return err
 }

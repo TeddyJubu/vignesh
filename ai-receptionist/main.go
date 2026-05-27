@@ -80,7 +80,7 @@ func main() {
 
 	waClient, err := whatsapp.New(ctx, whatsmeowDB, func(v *events.Message) {
 		if handler != nil {
-			handler.HandleMessage(context.Background(), v)
+			handler.HandleMessage(ctx, v)
 		}
 	})
 	if err != nil {
@@ -90,6 +90,7 @@ func main() {
 
 	styleExtra := loadStyleExamples()
 	handler = receptionist.New(cfg, appStore, aiClient, waClient, promptTpl, styleExtra, instructionsMD)
+	go appStore.RunCleanupLoop(ctx, store.DefaultCleanupConfig())
 
 	if err := waClient.Start(ctx); err != nil {
 		fmt.Fprintln(os.Stderr, "start:", err)

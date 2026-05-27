@@ -16,6 +16,7 @@ type debounceJob struct {
 	lines  []string
 	events []*events.Message
 	ctxs   []whatsapp.InboundContext
+	appCtx context.Context
 }
 
 // Debouncer batches rapid messages per conversation.
@@ -70,6 +71,9 @@ func (d *Debouncer) Enqueue(ctx context.Context, v *events.Message, in whatsapp.
 	st.job.lines = append(st.job.lines, in.Text)
 	st.job.events = append(st.job.events, v)
 	st.job.ctxs = append(st.job.ctxs, in)
+	if st.job.appCtx == nil {
+		st.job.appCtx = ctx
+	}
 
 	if st.timer != nil {
 		st.timer.Stop()
@@ -100,5 +104,9 @@ func (d *Debouncer) flush(convID string) {
 	lastEv := job.events[len(job.events)-1]
 	lastIn := job.ctxs[len(job.ctxs)-1]
 	combined := strings.Join(job.lines, "\n")
-	d.onFlush(context.Background(), lastEv, lastIn, combined)
+	parent := job.appCtx
+	if parent == nil {
+		parent = context.Background()
+	}
+	d.onFlush(parent, lastEv, lastIn, combined)
 }

@@ -11,7 +11,10 @@ type ContactFact struct {
 
 func (d *DB) ListContactFacts(convID string) ([]ContactFact, error) {
 	rows, err := d.db.Query(
-		`SELECT conv_id, fact_key, fact_value, updated_at FROM contact_facts WHERE conv_id = ? ORDER BY fact_key`,
+		`SELECT conv_id, fact_key, fact_value, updated_at FROM contact_facts
+		 WHERE conv_id = ?
+		   AND (expires_at IS NULL OR expires_at = '' OR datetime(expires_at) > datetime('now'))
+		 ORDER BY fact_key`,
 		convID,
 	)
 	if err != nil {

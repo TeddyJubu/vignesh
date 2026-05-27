@@ -6,6 +6,8 @@ import (
 	"strings"
 )
 
+const schemaVersionCurrent = 2
+
 var contactMigrations = []string{
 	`ALTER TABLE contacts ADD COLUMN paused_until TEXT`,
 	`ALTER TABLE contacts ADD COLUMN language TEXT NOT NULL DEFAULT ''`,
@@ -14,6 +16,39 @@ var contactMigrations = []string{
 	`ALTER TABLE contacts ADD COLUMN status_before_pause TEXT`,
 	`ALTER TABLE contacts ADD COLUMN webhook_sent_at TEXT`,
 	`ALTER TABLE contacts ADD COLUMN nudge_sent_at TEXT`,
+	`ALTER TABLE contacts ADD COLUMN mode TEXT NOT NULL DEFAULT ''`,
+	`ALTER TABLE contact_facts ADD COLUMN expires_at TEXT`,
+}
+
+var infraMigrations = []string{
+	`CREATE TABLE IF NOT EXISTS schema_version (
+		version INTEGER PRIMARY KEY,
+		applied_at DATETIME NOT NULL DEFAULT (datetime('now'))
+	)`,
+	`CREATE TABLE IF NOT EXISTS conv_meta (
+		conv_id TEXT PRIMARY KEY,
+		last_ack_at TEXT
+	)`,
+	`CREATE TABLE IF NOT EXISTS turn_traces (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		conv_id TEXT NOT NULL,
+		phase TEXT NOT NULL,
+		latency_ms INTEGER NOT NULL DEFAULT 0,
+		error TEXT,
+		created_at DATETIME NOT NULL DEFAULT (datetime('now'))
+	)`,
+	`CREATE INDEX IF NOT EXISTS idx_turn_traces_conv ON turn_traces(conv_id, created_at)`,
+	`CREATE TABLE IF NOT EXISTS tool_runs (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		conv_id TEXT NOT NULL,
+		tool TEXT NOT NULL,
+		input TEXT NOT NULL DEFAULT '',
+		output TEXT NOT NULL DEFAULT '',
+		error TEXT,
+		latency_ms INTEGER NOT NULL DEFAULT 0,
+		created_at DATETIME NOT NULL DEFAULT (datetime('now'))
+	)`,
+	`CREATE INDEX IF NOT EXISTS idx_tool_runs_conv ON tool_runs(conv_id, created_at)`,
 }
 
 const defaultIdentitySoul = `You are Julia — sharp, witty, and proactive. You are a thinking partner to Vignesh Wadarajan, CEO of Epicware Pte Ltd in Singapore.
@@ -64,12 +99,24 @@ func migrate(db *sql.DB) error {
 	if err := seedAgentNotes(db); err != nil {
 		return err
 	}
+	for _, stmt := range infraMigrations {
+		if _, err := db.Exec(stmt); err != nil {
+			return fmt.Errorf("migrate infra: %w", err)
+		}
+	}
 	for _, stmt := range contactMigrations {
 		if _, err := db.Exec(stmt); err != nil {
 			if !isDuplicateColumn(err) {
 				return fmt.Errorf("migrate: %w", err)
 			}
 		}
+	}
+	if _, err := db.Exec(
+		`INSERT INTO schema_version (version, applied_at) VALUES (?, datetime('now'))
+		 ON CONFLICT(version) DO NOTHING`,
+		schemaVersionCurrent,
+	); err != nil {
+		return fmt.Errorf("schema_version: %w", err)
 	}
 	return nil
 }

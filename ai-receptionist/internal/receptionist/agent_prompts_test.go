@@ -5,17 +5,23 @@ import (
 	"testing"
 
 	"ai-receptionist/internal/agent"
+	"ai-receptionist/internal/agent/tools"
 	"ai-receptionist/internal/ai"
 )
+
+var testToolReg = tools.DefaultRegistry()
 
 func TestBuildPlannerMessages_IncludesSchema(t *testing.T) {
 	msgs := []ai.ChatMessage{
 		{Role: "system", Content: "sys"},
 		{Role: "user", Content: "hi"},
 	}
-	out := buildPlannerMessages(msgs, true)
+	out := buildPlannerMessages(msgs, true, testToolReg)
 	if len(out) < 1 {
 		t.Fatalf("len=%d", len(out))
+	}
+	if !strings.Contains(out[0].Content, "check_calendar_availability") {
+		t.Fatalf("missing tool list: %q", out[0].Content)
 	}
 	if !strings.Contains(out[0].Content, `"final_response_mode"`) {
 		t.Fatalf("missing schema: %q", out[0].Content)

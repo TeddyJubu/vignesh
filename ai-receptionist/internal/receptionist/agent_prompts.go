@@ -5,17 +5,19 @@ import (
 	"strings"
 
 	"ai-receptionist/internal/agent"
+	"ai-receptionist/internal/agent/tools"
 	"ai-receptionist/internal/ai"
 )
 
-func buildPlannerMessages(msgs []ai.ChatMessage, structured bool) []ai.ChatMessage {
+func buildPlannerMessages(msgs []ai.ChatMessage, structured bool, reg *tools.Registry) []ai.ChatMessage {
+	toolList := reg.PlannerToolList()
 	var b strings.Builder
 	b.WriteString("You are a planner. Output ONLY valid JSON (no markdown). Schema:\n")
-	b.WriteString(`{"goal":"string","agents":[{"name":"string","tool":"check_calendar_availability|collect_email|align_time|book_appointment","input":"string","expected_output":"string"}],"questions":["string"],"final_response_mode":"structured|text"}` + "\n")
+	b.WriteString(`{"goal":"string","agents":[{"name":"string","tool":"` + toolList + `","input":"string","expected_output":"string"}],"questions":["string"],"final_response_mode":"structured|text"}` + "\n")
 	b.WriteString("Rules:\n")
 	b.WriteString("- If you need missing info from the user, put it in questions[] and keep agents[] empty.\n")
 	b.WriteString("- Max 4 agents.\n")
-	b.WriteString("- Use stub tools only; no side effects.\n")
+	b.WriteString("- Use registered tools only.\n")
 	if structured {
 		b.WriteString("- final_response_mode must be \"structured\".\n")
 	} else {
@@ -31,6 +33,23 @@ func buildPlannerMessages(msgs []ai.ChatMessage, structured bool) []ai.ChatMessa
 	return []ai.ChatMessage{
 		{Role: "system", Content: b.String()},
 		{Role: "user", Content: "Plan now."},
+	}
+}
+
+func buildPlannerRepairMessages(invalid string, structured bool, reg *tools.Registry) []ai.ChatMessage {
+	toolList := reg.PlannerToolList()
+	schema := `{"goal":"string","agents":[{"name":"string","tool":"` + toolList + `","input":"string","expected_output":"string"}],"questions":["string"],"final_response_mode":"structured|text"}`
+	mode := "text"
+	if structured {
+		mode = "structured"
+	}
+	return []ai.ChatMessage{
+		{
+			Role: "system",
+			Content: "Fix the following into ONE valid JSON planner object. Schema: " + schema +
+				"\nMax 4 agents. final_response_mode must be \"" + mode + "\". No markdown.",
+		},
+		{Role: "user", Content: invalid},
 	}
 }
 
@@ -50,16 +69,11 @@ func buildCollationMessages(plan *agent.Plan, answers map[string]string, results
 	if len(answers) == 0 {
 		b.WriteString("(none)\n")
 	} else {
-		keys := make([]string, 0, len(answers))
-		for k := range answers {
-			keys = append(keys, k)
-		}
-		// stable enough without sorting; not user-visible.
-		for _, q := range keys {
+		for q, a := range answers {
 			b.WriteString("- ")
 			b.WriteString(q)
 			b.WriteString(": ")
-			b.WriteString(answers[q])
+			b.WriteString(a)
 			b.WriteString("\n")
 		}
 	}
@@ -73,4 +87,3 @@ func buildCollationMessages(plan *agent.Plan, answers map[string]string, results
 		{Role: "user", Content: "Produce the final response now."},
 	}
 }
-

@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 
+	"ai-receptionist/internal/config"
 	"ai-receptionist/internal/store"
 )
 
@@ -22,11 +23,13 @@ func TestBuildAgentInstructions_IncludesSoulAndClient(t *testing.T) {
 		t.Fatal("expected seeded identity_soul")
 	}
 
-	out, err := buildAgentInstructions(db, "6591234567", "## Client\nTest rule\n")
+	cfg := &config.Config{BusinessName: "Acme Co", OwnerName: "Vignesh"}
+	pb := NewPromptBuilder(cfg, db, "## Client\nTest rule\n")
+	out, err := pb.Build("6591234567", modeSales)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(out, "Julia") {
+	if !strings.Contains(out, "Julia") || !strings.Contains(out, "Acme Co") {
 		t.Fatalf("missing baseline: %q", out)
 	}
 	if !strings.Contains(out, "## Soul") || !strings.Contains(out, "Vignesh") {
@@ -34,5 +37,8 @@ func TestBuildAgentInstructions_IncludesSoulAndClient(t *testing.T) {
 	}
 	if !strings.Contains(out, "## Client instructions") || !strings.Contains(out, "Test rule") {
 		t.Fatalf("missing client instructions: %q", out)
+	}
+	if !strings.Contains(out, "julia-sales") && !strings.Contains(out, "Mode runbook") {
+		t.Fatalf("missing sales runbook: %q", out)
 	}
 }
