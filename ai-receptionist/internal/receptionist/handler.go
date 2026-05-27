@@ -62,6 +62,7 @@ func New(cfg *config.Config, db *store.DB, aiClient ai.Provider, wa *whatsapp.Cl
 		graphiti:       memory.NewClient(graphitiURL),
 		chatLocks:      newConvCache(),
 	}
+	agent.SetDefaultRegistry(h.toolReg)
 	h.debouncer = NewDebouncer(cfg.DebounceSeconds, h.handleDebounced)
 	return h
 }
@@ -72,15 +73,19 @@ func (h *Handler) HandleMessage(ctx context.Context, v *events.Message) {
 	if own != nil {
 		ownJID = *own
 	}
+	replyGroups := h.cfg.ReplyToGroups && h.cfg.GroupCSAllowed()
 	in, ok := whatsapp.ShouldProcessInbound(v, whatsapp.InboundFilter{
-		OwnerPhone:     h.cfg.OwnerNumber,
-		ReplyToGroups:  h.cfg.ReplyToGroups,
-		ReplyToSelf:    h.cfg.SelfChatEnabled(),
-		OwnJID:         ownJID,
-		Sent:           h.wa.Sent,
-		Normalize:      config.NormalizePhone,
-		AllowedNumbers: h.cfg.AllowedNumbers,
-		BlockedNumbers: h.cfg.BlockedNumbers,
+		OwnerPhone:          h.cfg.OwnerNumber,
+		ReplyToGroups:       replyGroups,
+		ReplyToSelf:         h.cfg.SelfChatEnabled(),
+		OwnJID:              ownJID,
+		Sent:                h.wa.Sent,
+		Normalize:           config.NormalizePhone,
+		AllowedNumbers:      h.cfg.AllowedNumbers,
+		BlockedNumbers:      h.cfg.BlockedNumbers,
+		SupportGroupJIDs:    h.cfg.SupportGroupJIDs,
+		GroupReplyPolicy:    h.cfg.ResolvedGroupReplyPolicy(),
+		GroupMentionAliases: h.cfg.GroupMentionAliases,
 	})
 	if !ok {
 		if os.Getenv("DEBUG_INBOUND") == "1" && v != nil {
@@ -95,6 +100,14 @@ func (h *Handler) HandleMessage(ctx context.Context, v *events.Message) {
 		if canPauseSender(in, h.cfg.OwnerNumber) {
 			h.handleReset(ctx, v, in)
 		}
+		return
+	}
+	if IsGroupAdminKeyword(in.Text) && canPauseSender(in, h.cfg.OwnerNumber) {
+		h.handleGroupAdmin(ctx, v, in)
+		return
+	}
+	if IsBookingCoordinationKeyword(in.Text) && canPauseSender(in, h.cfg.OwnerNumber) {
+		h.handleBookingCoordination(ctx, v, in)
 		return
 	}
 	if IsPauseKeyword(in.Text) {
@@ -441,6 +454,12 @@ func (h *Handler) completeWithPlanner(ctx context.Context, convID string, msgs [
 		out, err := h.ai.Complete(fallbackCtx, msgs, structured)
 		return out, true, false, nil, err
 	}
+	if err := h.toolReg.ValidatePlannerTools(planAgentTools(plan)); err != nil {
+		fallbackCtx, cancelFB := budgetCtx(ctx, 20*time.Second)
+		defer cancelFB()
+		out, err := h.ai.Complete(fallbackCtx, msgs, structured)
+		return out, true, false, nil, err
+	}
 	if len(plan.Questions) > 0 {
 		state := agent.State{
 			Plan:          *plan,
@@ -578,6 +597,19 @@ func (h *Handler) notifyQualifiedLead(ctx context.Context, convID string, in wha
 	}
 	fmt.Println("Owner alerted for lead:", in.Sender)
 	return nil
+}
+
+func planAgentTools(plan *agent.Plan) []string {
+	if plan == nil {
+		return nil
+	}
+	out := make([]string, 0, len(plan.Agents))
+	for _, a := range plan.Agents {
+		if t := strings.TrimSpace(a.Tool); t != "" {
+			out = append(out, t)
+		}
+	}
+	return out
 }
 
 func (h *Handler) buildSystemPrompt(convID string, leadData map[string]string, in whatsapp.InboundContext, language, mode string) (string, error) {

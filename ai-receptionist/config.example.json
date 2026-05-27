@@ -8,6 +8,17 @@
   "openai_base_url": "",
   "mode": "receptionist",
   "reply_to_groups": false,
+  "support_group_jids": [],
+  "group_reply_policy": "mention_or_owner",
+  "group_mention_aliases": ["julia"],
+  "capabilities": {
+    "group_support": false,
+    "group_admin": false,
+    "calendar": true,
+    "outbound_booking": true,
+    "marketing_research": true,
+    "lead_scrape": false
+  },
   "reply_to_self_chat": true,
   "business_description": "Demo receptionist for testing.",
   "allowed_numbers": [],

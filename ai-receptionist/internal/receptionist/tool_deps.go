@@ -16,6 +16,16 @@ func (s storeAdapter) InsertToolRun(convID, tool, input, output, errMsg string, 
 	return s.db.InsertToolRun(convID, tool, input, output, errMsg, latencyMS)
 }
 
+func (s storeAdapter) InsertAsyncJob(job tools.AsyncJob) (string, error) {
+	return s.db.InsertAsyncJob(store.AsyncJob{
+		ID:          job.ID,
+		ConvID:      job.ConvID,
+		JobType:     job.JobType,
+		Payload:     job.Payload,
+		NotifyOwner: job.NotifyOwner,
+	})
+}
+
 func (s storeAdapter) RecentMessages(convID string, limit int) ([]tools.Message, error) {
 	msgs, err := s.db.RecentMessages(convID, limit)
 	if err != nil {
@@ -58,6 +68,7 @@ func (c configAdapter) BusinessName() string        { return c.cfg.BusinessName 
 func (c configAdapter) DisplayOwnerName() string  { return c.cfg.DisplayOwnerName() }
 func (c configAdapter) OwnerNumber() string       { return c.cfg.OwnerNumber }
 func (c configAdapter) PauseHours() int           { return c.cfg.PauseHours }
+func (c configAdapter) WebhookURL() string        { return c.cfg.WebhookURL }
 
 type waAdapter struct {
 	wa  *whatsapp.Client

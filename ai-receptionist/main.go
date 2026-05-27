@@ -12,6 +12,7 @@ import (
 	"ai-receptionist/internal/ai"
 	"ai-receptionist/internal/config"
 	"ai-receptionist/internal/httpapi"
+	"ai-receptionist/internal/ops"
 	"ai-receptionist/internal/receptionist"
 	"ai-receptionist/internal/settings"
 	"ai-receptionist/internal/store"
@@ -97,6 +98,13 @@ func main() {
 	styleExtra := loadStyleExamples()
 	handler = receptionist.New(cfg, appStore, aiClient, waClient, promptTpl, styleExtra, instructionsMD)
 	go appStore.RunCleanupLoop(ctx, store.DefaultCleanupConfig())
+	go (&ops.AsyncWorker{
+		Store:    appStore,
+		Cfg:      cfg,
+		WA:       waClient,
+		Handlers: ops.DefaultJobHandlers(),
+		Interval: 30 * time.Second,
+	}).Run(ctx)
 
 	var api *httpapi.Server
 	if httpAddr != "" {
