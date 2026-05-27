@@ -3,7 +3,6 @@ package calendar
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"os"
 	"strings"
 	"time"
@@ -18,7 +17,11 @@ type Calendar interface {
 // New returns Google Calendar when credentials are configured, otherwise a stub.
 func New() Calendar {
 	if creds := strings.TrimSpace(os.Getenv("GOOGLE_CALENDAR_CREDENTIALS")); creds != "" {
-		return &googleCalendar{credentialsPath: creds, tz: loadTZ()}
+		calID := strings.TrimSpace(os.Getenv("GOOGLE_CALENDAR_ID"))
+		if calID == "" {
+			calID = "primary"
+		}
+		return &googleCalendar{credentialsPath: creds, calendarID: calID, tz: loadTZ()}
 	}
 	return &stubCalendar{tz: loadTZ()}
 }
@@ -69,16 +72,16 @@ func (s *stubCalendar) BookAppointment(ctx context.Context, convID, input string
 	return string(b), nil
 }
 
-// googleCalendar is a placeholder for real Google Calendar API integration.
-// When GOOGLE_CALENDAR_CREDENTIALS is set, extend this type with google.golang.org/api/calendar/v3.
 type googleCalendar struct {
 	credentialsPath string
+	calendarID      string
 	tz              *time.Location
 }
 
 func (g *googleCalendar) CheckAvailability(ctx context.Context, input string) (string, error) {
-	_ = ctx
-	// Credentials present but full OAuth client wiring is deferred; fall back to stub slots with source tag.
+	if out, err := g.checkAvailabilityReal(ctx, input); err == nil {
+		return out, nil
+	}
 	s := &stubCalendar{tz: g.tz}
 	out, err := s.CheckAvailability(ctx, input)
 	if err != nil {
@@ -86,8 +89,8 @@ func (g *googleCalendar) CheckAvailability(ctx context.Context, input string) (s
 	}
 	var m map[string]any
 	if json.Unmarshal([]byte(out), &m) == nil {
-		m["source"] = "google_calendar_deferred"
-		m["note"] = fmt.Sprintf("credentials at %s — implement API client", g.credentialsPath)
+		m["source"] = "google_calendar_fallback"
+		m["note"] = "Google API unavailable; showing stub slots"
 		b, _ := json.Marshal(m)
 		return string(b), nil
 	}
@@ -95,11 +98,14 @@ func (g *googleCalendar) CheckAvailability(ctx context.Context, input string) (s
 }
 
 func (g *googleCalendar) BookAppointment(ctx context.Context, convID, input string) (string, error) {
+	if out, err := g.bookAppointmentReal(ctx, convID, input); err == nil {
+		return out, nil
+	}
 	b, _ := json.Marshal(map[string]any{
 		"booked":          false,
 		"conv_id":         convID,
 		"idempotency_key": input,
-		"reason":          "google_calendar_write_deferred",
+		"reason":          "google_calendar_write_failed",
 	})
 	return string(b), nil
 }

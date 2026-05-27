@@ -196,11 +196,5 @@ func toolCalendarFrom(ctx context.Context) Calendar {
 
 // DefaultRegistry registers all receptionist tools.
 func DefaultRegistry() *Registry {
-	return NewRegistry(
-		calendarCheckTool{},
-		collectEmailTool{},
-		alignTimeTool{},
-		bookAppointmentTool{},
-		escalateTool{},
-	)
+	return extendedRegistry()
 }

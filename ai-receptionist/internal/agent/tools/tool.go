@@ -44,10 +44,20 @@ type Deps struct {
 
 type Store interface {
 	InsertToolRun(convID, tool, input, output, errMsg string, latencyMS int64) error
+	InsertAsyncJob(job AsyncJob) error
 	RecentMessages(convID string, limit int) ([]Message, error)
 	PauseContact(phone string, until time.Time) error
 	GetOrCreateContact(phone string) (Contact, error)
 	RecentToolRuns(convID string, limit int) ([]ToolRun, error)
+}
+
+// AsyncJob is a minimal view for tool queueing.
+type AsyncJob struct {
+	ID          string
+	ConvID      string
+	JobType     string
+	Payload     string
+	NotifyOwner bool
 }
 
 type Config interface {
@@ -55,6 +65,7 @@ type Config interface {
 	DisplayOwnerName() string
 	OwnerNumber() string
 	PauseHours() int
+	WebhookURL() string
 }
 
 type WhatsApp interface {

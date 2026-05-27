@@ -21,6 +21,16 @@ type FollowUpNudge struct {
 	Message   string `json:"message,omitempty"`
 }
 
+// Capabilities toggles optional Julia features (all default false except group_support when reply_to_groups).
+type Capabilities struct {
+	GroupSupport      bool `json:"group_support"`
+	GroupAdmin        bool `json:"group_admin"`
+	Calendar          bool `json:"calendar"`
+	OutboundBooking   bool `json:"outbound_booking"`
+	MarketingResearch bool `json:"marketing_research"`
+	LeadScrape        bool `json:"lead_scrape"`
+}
+
 type Config struct {
 	BusinessName        string `json:"business_name"`
 	OwnerName           string `json:"owner_name,omitempty"` // human name for prompts/alerts
@@ -35,6 +45,13 @@ type Config struct {
 	Mode string `json:"mode"`
 	// ReplyToGroups allows auto-reply in WhatsApp groups (default false).
 	ReplyToGroups bool `json:"reply_to_groups"`
+	// SupportGroupJIDs limits group replies to these group JIDs (empty = all groups when reply_to_groups).
+	SupportGroupJIDs []string `json:"support_group_jids,omitempty"`
+	// GroupReplyPolicy: "always" | "mention_or_owner" | "owner_only" (default mention_or_owner when groups on).
+	GroupReplyPolicy string `json:"group_reply_policy,omitempty"`
+	// GroupMentionAliases are extra triggers besides @mention (e.g. "julia").
+	GroupMentionAliases []string `json:"group_mention_aliases,omitempty"`
+	Capabilities        Capabilities `json:"capabilities"`
 	// ReplyToSelfChat replies in WhatsApp "Message yourself" (notes-to-self). Default true.
 	ReplyToSelfChat *bool `json:"reply_to_self_chat,omitempty"`
 	// EnableLeadTracking runs qualification + lead_data (receptionist default: true).
@@ -96,7 +113,55 @@ func Load(path string) (*Config, error) {
 		t := true
 		c.ReplyToSelfChat = &t
 	}
+	c.applyCapabilityDefaults()
 	return &c, nil
+}
+
+func (c *Config) applyCapabilityDefaults() {
+	if c.ReplyToGroups && !c.Capabilities.GroupSupport {
+		c.Capabilities.GroupSupport = true
+	}
+	if c.GroupReplyPolicy == "" {
+		if c.ReplyToGroups {
+			c.GroupReplyPolicy = "mention_or_owner"
+		} else {
+			c.GroupReplyPolicy = "always"
+		}
+	}
+	if len(c.GroupMentionAliases) == 0 {
+		c.GroupMentionAliases = []string{"julia"}
+	}
+}
+
+// GroupCSAllowed returns whether inbound group messages should be processed.
+func (c *Config) GroupCSAllowed() bool {
+	return c.ReplyToGroups && c.Capabilities.GroupSupport
+}
+
+func (c *Config) ResolvedGroupReplyPolicy() string {
+	p := strings.ToLower(strings.TrimSpace(c.GroupReplyPolicy))
+	switch p {
+	case "always", "mention_or_owner", "owner_only":
+		return p
+	default:
+		if c.ReplyToGroups {
+			return "mention_or_owner"
+		}
+		return "always"
+	}
+}
+
+func (c *Config) IsGroupAllowlisted(groupJID string) bool {
+	if len(c.SupportGroupJIDs) == 0 {
+		return true
+	}
+	g := strings.TrimSpace(groupJID)
+	for _, id := range c.SupportGroupJIDs {
+		if strings.TrimSpace(id) == g {
+			return true
+		}
+	}
+	return false
 }
 
 func (c *Config) ResolvedAIProvider() string {

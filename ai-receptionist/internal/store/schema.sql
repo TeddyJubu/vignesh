@@ -101,3 +101,33 @@ CREATE TABLE IF NOT EXISTS dream_proposals (
 );
 
 CREATE INDEX IF NOT EXISTS idx_dream_proposals_created ON dream_proposals(created_at);
+
+CREATE TABLE IF NOT EXISTS async_jobs (
+    id TEXT PRIMARY KEY,
+    conv_id TEXT NOT NULL DEFAULT '',
+    job_type TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'pending',
+    payload TEXT NOT NULL DEFAULT '{}',
+    result TEXT NOT NULL DEFAULT '',
+    error TEXT,
+    notify_owner INTEGER NOT NULL DEFAULT 1,
+    created_at DATETIME NOT NULL DEFAULT (datetime('now')),
+    updated_at DATETIME NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_async_jobs_status ON async_jobs(status, created_at);
+
+CREATE TABLE IF NOT EXISTS booking_requests (
+    id TEXT PRIMARY KEY,
+    owner_conv TEXT NOT NULL DEFAULT '',
+    guest_phone TEXT NOT NULL DEFAULT '',
+    guest_name TEXT NOT NULL DEFAULT '',
+    status TEXT NOT NULL DEFAULT 'pending',
+    guest_slots_json TEXT NOT NULL DEFAULT '[]',
+    proposed_slot TEXT,
+    event_id TEXT,
+    created_at DATETIME NOT NULL DEFAULT (datetime('now')),
+    updated_at DATETIME NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_booking_requests_guest ON booking_requests(guest_phone, status);

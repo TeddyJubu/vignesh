@@ -67,14 +67,17 @@ func IsBroadcast(chat types.JID) bool {
 }
 
 type InboundFilter struct {
-	OwnerPhone     string
-	ReplyToGroups  bool
-	ReplyToSelf    bool
-	OwnJID         types.JID
-	Sent           *OutboundTracker
-	Normalize      func(string) string
-	AllowedNumbers []string // if non-empty, only these senders are processed
-	BlockedNumbers []string
+	OwnerPhone          string
+	ReplyToGroups       bool
+	ReplyToSelf         bool
+	OwnJID              types.JID
+	Sent                *OutboundTracker
+	Normalize           func(string) string
+	AllowedNumbers      []string // if non-empty, only these senders are processed
+	BlockedNumbers      []string
+	SupportGroupJIDs    []string // if non-empty, only these group JIDs
+	GroupReplyPolicy    string   // always | mention_or_owner | owner_only
+	GroupMentionAliases []string // e.g. julia
 }
 
 // IsSelfChat detects WhatsApp "Message yourself" (notes-to-self).
@@ -131,6 +134,9 @@ func ShouldProcessInbound(v *events.Message, f InboundFilter) (ctx InboundContex
 	if isGroup && !f.ReplyToGroups {
 		return InboundContext{}, false
 	}
+	if isGroup && len(f.SupportGroupJIDs) > 0 && !isGroupAllowlisted(v.Info.Chat.String(), f.SupportGroupJIDs) {
+		return InboundContext{}, false
+	}
 
 	text := strings.TrimSpace(ExtractInboundText(v.Message))
 	if text == "" {
@@ -156,6 +162,10 @@ func ShouldProcessInbound(v *events.Message, f InboundFilter) (ctx InboundContex
 		return InboundContext{}, false
 	}
 	if !isAllowed(sender, f.AllowedNumbers) {
+		return InboundContext{}, false
+	}
+
+	if isGroup && !groupReplyAllowed(v, f, sender, text) {
 		return InboundContext{}, false
 	}
 
@@ -202,4 +212,70 @@ func senderLabel(v *events.Message) string {
 		return v.Info.PushName
 	}
 	return v.Info.Sender.User
+}
+
+func isGroupAllowlisted(groupJID string, allowlist []string) bool {
+	g := strings.TrimSpace(groupJID)
+	for _, id := range allowlist {
+		if strings.TrimSpace(id) == g {
+			return true
+		}
+	}
+	return false
+}
+
+func groupReplyAllowed(v *events.Message, f InboundFilter, sender, text string) bool {
+	policy := strings.ToLower(strings.TrimSpace(f.GroupReplyPolicy))
+	if policy == "" {
+		policy = "mention_or_owner"
+	}
+	switch policy {
+	case "always":
+		return true
+	case "owner_only":
+		return sender == f.OwnerPhone
+	case "mention_or_owner":
+		if sender == f.OwnerPhone {
+			return true
+		}
+		return messageMentionsBot(v, f.OwnJID, f.GroupMentionAliases, text)
+	default:
+		return messageMentionsBot(v, f.OwnJID, f.GroupMentionAliases, text)
+	}
+}
+
+func messageMentionsBot(v *events.Message, own types.JID, aliases []string, text string) bool {
+	if v == nil || v.Message == nil {
+		return false
+	}
+	mentioned := false
+	checkJID := func(jid string) {
+		if jid == "" {
+			return
+		}
+		if !own.IsEmpty() && strings.Contains(jid, own.User) {
+			mentioned = true
+		}
+	}
+	if et := v.Message.GetExtendedTextMessage(); et != nil {
+		if ci := et.GetContextInfo(); ci != nil {
+			for _, m := range ci.GetMentionedJID() {
+				checkJID(m)
+			}
+		}
+	}
+	if mentioned {
+		return true
+	}
+	lower := strings.ToLower(text)
+	for _, a := range aliases {
+		a = strings.TrimSpace(strings.ToLower(a))
+		if a == "" {
+			continue
+		}
+		if strings.Contains(lower, "@"+a) || strings.Contains(lower, a) {
+			return true
+		}
+	}
+	return false
 }

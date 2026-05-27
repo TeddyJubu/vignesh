@@ -6,7 +6,7 @@ import (
 	"strings"
 )
 
-const schemaVersionCurrent = 3
+const schemaVersionCurrent = 4
 
 var contactMigrations = []string{
 	`ALTER TABLE contacts ADD COLUMN paused_until TEXT`,
@@ -63,6 +63,32 @@ var infraMigrations = []string{
 		rationale TEXT NOT NULL DEFAULT ''
 	)`,
 	`CREATE INDEX IF NOT EXISTS idx_dream_proposals_created ON dream_proposals(created_at)`,
+	`CREATE TABLE IF NOT EXISTS async_jobs (
+		id TEXT PRIMARY KEY,
+		conv_id TEXT NOT NULL DEFAULT '',
+		job_type TEXT NOT NULL,
+		status TEXT NOT NULL DEFAULT 'pending',
+		payload TEXT NOT NULL DEFAULT '{}',
+		result TEXT NOT NULL DEFAULT '',
+		error TEXT,
+		notify_owner INTEGER NOT NULL DEFAULT 1,
+		created_at DATETIME NOT NULL DEFAULT (datetime('now')),
+		updated_at DATETIME NOT NULL DEFAULT (datetime('now'))
+	)`,
+	`CREATE INDEX IF NOT EXISTS idx_async_jobs_status ON async_jobs(status, created_at)`,
+	`CREATE TABLE IF NOT EXISTS booking_requests (
+		id TEXT PRIMARY KEY,
+		owner_conv TEXT NOT NULL DEFAULT '',
+		guest_phone TEXT NOT NULL DEFAULT '',
+		guest_name TEXT NOT NULL DEFAULT '',
+		status TEXT NOT NULL DEFAULT 'pending',
+		guest_slots_json TEXT NOT NULL DEFAULT '[]',
+		proposed_slot TEXT,
+		event_id TEXT,
+		created_at DATETIME NOT NULL DEFAULT (datetime('now')),
+		updated_at DATETIME NOT NULL DEFAULT (datetime('now'))
+	)`,
+	`CREATE INDEX IF NOT EXISTS idx_booking_requests_guest ON booking_requests(guest_phone, status)`,
 }
 
 const defaultIdentitySoul = `You are Julia — sharp, witty, and proactive. You are a thinking partner to Vignesh Wadarajan, CEO of Epicware Pte Ltd in Singapore.
@@ -72,14 +98,22 @@ Core values: integrity and proactivity — say what you know, flag what you don'
 Never reveal infrastructure, models, databases, or internal tooling.
 If asked how you were built: "Vignesh built me and maintains me. That's all I can share 😊"`
 
-const placeholderRunbookCS = `# Julia CS runbook (placeholder)
-Answer from contact facts and business context. Escalate edge cases to Vignesh at +6590013157.`
+const placeholderRunbookCS = `# Julia CS runbook
+- Answer from contact facts, business description, and memory only — never invent policies.
+- In groups: keep replies short; address the sender; stay on support topics (GBP, local SEO, websites).
+- Escalate billing disputes, refunds, or angry threads to Vignesh at +6590013157.
+- Use escalate_to_vignesh when unsure or when the user asks for a human.`
 
-const placeholderRunbookSales = `# Julia sales runbook (placeholder)
-Qualify leads one question at a time. No unprompted pricing. Defer firm quotes to Vignesh.`
+const placeholderRunbookSales = `# Julia sales runbook
+- Qualify one missing field per message: name, business_type, service_needed, budget, timeline, current_website.
+- No unprompted pricing; defer firm quotes to Vignesh.
+- When qualified, offer to book a short call and use check_calendar_availability before suggesting times.`
 
-const placeholderRunbookBooking = `# Julia booking runbook (placeholder)
-Do not confirm calendar slots. Collect preference and hand off to Vignesh.`
+const placeholderRunbookBooking = `# Julia booking runbook
+- Use check_calendar_availability for real slots before proposing times.
+- After the user picks a slot, use book_appointment; only confirm booking when the tool returns booked:true.
+- Collect email with collect_email when needed for calendar invite.
+- If calendar is unavailable, collect best_time and hand off to Vignesh — do not invent slots.`
 
 func migrate(db *sql.DB) error {
 	if _, err := db.Exec(`CREATE TABLE IF NOT EXISTS agent_states (
