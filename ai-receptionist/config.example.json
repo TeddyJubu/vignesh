@@ -2,7 +2,7 @@
   "business_name": "Demo",
   "owner_name": "vignesh",
   "owner_number": "1000000000000",
-  "model": "gemma4:31b-cloud",
+  "model": "nemotron-3-super:cloud",
   "ai_provider": "ollama",
   "openai_model": "",
   "openai_base_url": "",

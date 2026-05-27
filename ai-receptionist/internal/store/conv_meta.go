@@ -34,3 +34,8 @@ func (d *DB) TouchLastAckAt(convID string, at time.Time) error {
 	)
 	return err
 }
+
+func (d *DB) ClearConvMeta(convID string) error {
+	_, err := d.db.Exec(`DELETE FROM conv_meta WHERE conv_id = ?`, convID)
+	return err
+}

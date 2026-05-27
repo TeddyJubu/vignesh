@@ -91,6 +91,12 @@ func (h *Handler) HandleMessage(ctx context.Context, v *events.Message) {
 	}
 	fmt.Printf("inbound conv=%s chat=%s text=%q\n", in.ConvID, v.Info.Chat, in.Text)
 
+	if IsResetKeyword(in.Text) {
+		if canPauseSender(in, h.cfg.OwnerNumber) {
+			h.handleReset(ctx, v, in)
+		}
+		return
+	}
 	if IsPauseKeyword(in.Text) {
 		if canPauseSender(in, h.cfg.OwnerNumber) {
 			h.handlePause(ctx, v, in)
@@ -120,6 +126,28 @@ func (h *Handler) handlePause(ctx context.Context, v *events.Message, in whatsap
 	ack := "Got it — I'll stay quiet in this chat until you message again or the pause expires."
 	_ = whatsapp.SendText(ctx, h.wa, v.Info.Chat, ack)
 	fmt.Printf("paused conv=%s until %s\n", in.ConvID, until.Format(time.RFC3339))
+}
+
+func (h *Handler) handleReset(ctx context.Context, v *events.Message, in whatsapp.InboundContext) {
+	lock := h.chatLock(in.ConvID)
+	lock.Lock()
+	defer lock.Unlock()
+
+	h.debouncer.Cancel(in.ConvID)
+
+	if err := h.store.ResetConversation(in.ConvID); err != nil {
+		fmt.Fprintln(os.Stderr, "reset:", err)
+		_ = whatsapp.SendText(ctx, h.wa, v.Info.Chat, "I couldn’t reset this chat right now — check the bot logs.")
+		return
+	}
+
+	// Also reset the in-memory ack cooldown key (DB meta is cleared in ResetConversation).
+	h.ackMu.Lock()
+	h.chatLocks.Set("ack:"+in.ConvID, time.Time{})
+	h.ackMu.Unlock()
+
+	_ = whatsapp.SendText(ctx, h.wa, v.Info.Chat, "Session refreshed — starting fresh in this chat.")
+	fmt.Printf("reset conv=%s\n", in.ConvID)
 }
 
 func (h *Handler) handleDebounced(ctx context.Context, v *events.Message, in whatsapp.InboundContext, combinedText string) {

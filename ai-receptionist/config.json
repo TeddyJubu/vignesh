@@ -1,7 +1,7 @@
 {
   "business_name": "Teddy",
   "owner_number": "8801521207499",
-  "model": "gemma4:31b-cloud",
+  "model": "nemotron-3-super:cloud",
   "mode": "receptionist",
   "reply_to_groups": false,
   "reply_to_self_chat": true,

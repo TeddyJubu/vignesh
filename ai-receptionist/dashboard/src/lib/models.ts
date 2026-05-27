@@ -42,13 +42,12 @@ export type ComposioStatus = {
 }
 
 export type RecallResult = {
-  query: string
   items: Array<{
-    id: string
-    title?: string
-    snippet: string
+    text: string
     score?: number
-    meta?: Record<string, unknown>
+    source?: 'sqlite' | 'graphiti' | string
+    created_at?: string | null
   }>
+  snippet?: string
 }
 

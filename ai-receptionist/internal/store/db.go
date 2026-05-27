@@ -337,3 +337,48 @@ func (d *DB) RecentMessages(phone string, limit int) ([]Message, error) {
 	}
 	return out, rows.Err()
 }
+
+// ResetConversation clears per-conversation state so the bot can start fresh.
+// It does NOT touch agent_notes (identity_soul / instructions).
+func (d *DB) ResetConversation(convID string) error {
+	tx, err := d.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	// Clear planner/pending session.
+	if _, err := tx.Exec(`DELETE FROM agent_states WHERE phone = ?`, convID); err != nil {
+		return err
+	}
+	// Clear facts and message history for the conversation.
+	if _, err := tx.Exec(`DELETE FROM contact_facts WHERE conv_id = ?`, convID); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`DELETE FROM messages WHERE phone = ?`, convID); err != nil {
+		return err
+	}
+	// Clear ack cooldown persistence.
+	if _, err := tx.Exec(`DELETE FROM conv_meta WHERE conv_id = ?`, convID); err != nil {
+		return err
+	}
+	// Reset contact funnel state (keep the contact row if it exists).
+	_, _ = tx.Exec(
+		`UPDATE contacts
+		   SET lead_data = '{}',
+		       status = 'new',
+		       mode = '',
+		       paused_until = NULL,
+		       status_before_pause = NULL,
+		       language = '',
+		       lead_score = '',
+		       last_bot_reply_at = NULL,
+		       webhook_sent_at = NULL,
+		       nudge_sent_at = NULL,
+		       last_message_at = datetime('now')
+		 WHERE phone = ?`,
+		convID,
+	)
+
+	return tx.Commit()
+}

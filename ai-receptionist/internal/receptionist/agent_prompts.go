@@ -12,10 +12,13 @@ import (
 func buildPlannerMessages(msgs []ai.ChatMessage, structured bool, reg *tools.Registry) []ai.ChatMessage {
 	toolList := reg.PlannerToolList()
 	var b strings.Builder
-	b.WriteString("You are a planner. Output ONLY valid JSON (no markdown). Schema:\n")
+	b.WriteString("You are a planner for a WhatsApp business receptionist named Julia.\n")
+	b.WriteString("Output ONLY valid JSON (no markdown). Schema:\n")
 	b.WriteString(`{"goal":"string","agents":[{"name":"string","tool":"` + toolList + `","input":"string","expected_output":"string"}],"questions":["string"],"final_response_mode":"structured|text"}` + "\n")
 	b.WriteString("Rules:\n")
 	b.WriteString("- If you need missing info from the user, put it in questions[] and keep agents[] empty.\n")
+	b.WriteString("- questions[] MUST be written in Julia's voice (warm, concise WhatsApp tone), not as a meta/planner.\n")
+	b.WriteString("- If the user asks who you are / your name, answer plainly: \"I'm Julia\" + one short line about purpose.\n")
 	b.WriteString("- Max 4 agents.\n")
 	b.WriteString("- Use registered tools only.\n")
 	if structured {
@@ -47,7 +50,8 @@ func buildPlannerRepairMessages(invalid string, structured bool, reg *tools.Regi
 		{
 			Role: "system",
 			Content: "Fix the following into ONE valid JSON planner object. Schema: " + schema +
-				"\nMax 4 agents. final_response_mode must be \"" + mode + "\". No markdown.",
+				"\nMax 4 agents. final_response_mode must be \"" + mode + "\". No markdown." +
+				"\nIf questions[] is non-empty, write questions in Julia's WhatsApp voice (and say \"I'm Julia\" if asked name).",
 		},
 		{Role: "user", Content: invalid},
 	}

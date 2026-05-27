@@ -31,7 +31,11 @@ export function MemoryRecallPage() {
       const next = await apiFetch<RecallResult>(`/memory/recall?q=${encodeURIComponent(q)}`)
       setResult(next)
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e))
+      if (typeof e === 'object' && e && 'message' in e) {
+        setError(String((e as any).message))
+      } else {
+        setError(e instanceof Error ? e.message : String(e))
+      }
     } finally {
       setLoading(false)
     }
@@ -49,8 +53,12 @@ export function MemoryRecallPage() {
         <Alert>
           <AlertTitle>Recall failed</AlertTitle>
           <AlertDescription>
-            The API should expose <code>GET /api/memory/recall</code> and proxy to
-            the sidecar.
+            <div>
+              The API should expose <code>GET /api/memory/recall</code> and proxy to the sidecar.
+            </div>
+            <div className="mt-2 text-xs text-muted-foreground">
+              {error}
+            </div>
           </AlertDescription>
         </Alert>
       )}
@@ -84,30 +92,41 @@ export function MemoryRecallPage() {
           <Badge variant="secondary">{title}</Badge>
         </CardHeader>
         <CardContent>
+          {result?.snippet ? (
+            <div className="mb-4 rounded-md border bg-muted p-3 text-xs leading-5">
+              {result.snippet}
+            </div>
+          ) : null}
           {hasResults ? (
             <div className="overflow-x-auto">
               <Table>
                 <TableHeader>
                   <TableRow>
                     <TableHead className="w-[140px]">Score</TableHead>
-                    <TableHead>Snippet</TableHead>
+                    <TableHead>Memory</TableHead>
+                    <TableHead className="w-[140px]">Source</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {result!.items.map((item) => (
-                    <TableRow key={item.id}>
+                  {result!.items.map((item, idx) => (
+                    <TableRow key={`${item.created_at ?? ''}-${idx}`}>
                       <TableCell className="align-top">
                         <span className="text-sm text-muted-foreground">
                           {item.score ?? '—'}
                         </span>
                       </TableCell>
                       <TableCell className="align-top">
-                        <div className="text-sm">{item.snippet}</div>
-                        {item.title ? (
+                        <div className="text-sm whitespace-pre-wrap">{item.text}</div>
+                        {item.created_at ? (
                           <div className="mt-1 text-xs text-muted-foreground">
-                            {item.title}
+                            {new Date(item.created_at).toLocaleString()}
                           </div>
                         ) : null}
+                      </TableCell>
+                      <TableCell className="align-top">
+                        <span className="text-sm text-muted-foreground">
+                          {item.source ?? '—'}
+                        </span>
                       </TableCell>
                     </TableRow>
                   ))}

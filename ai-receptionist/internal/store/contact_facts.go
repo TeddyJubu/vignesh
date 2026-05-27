@@ -44,3 +44,8 @@ func (d *DB) UpsertContactFact(convID, key, value string) error {
 	)
 	return err
 }
+
+func (d *DB) ClearContactFacts(convID string) error {
+	_, err := d.db.Exec(`DELETE FROM contact_facts WHERE conv_id = ?`, convID)
+	return err
+}
