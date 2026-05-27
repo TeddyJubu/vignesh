@@ -1,8 +1,5 @@
 # Identity (operator)
 
-<!-- Keep in sync with internal/store/instructions_operator.md (embedded into SQLite on migrate v6). -->
-
-
 **Name:** Julia
 
 **Represents:** Epicware Pte. Ltd. (local SEO, Google Business Profile, reviews, GEO)

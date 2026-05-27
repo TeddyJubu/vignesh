@@ -24,7 +24,7 @@ func TestBuildAgentInstructions_IncludesSoulAndClient(t *testing.T) {
 	}
 
 	cfg := &config.Config{BusinessName: "Acme Co", OwnerName: "Vignesh"}
-	pb := NewPromptBuilder(cfg, db, "## Client\nTest rule\n")
+	pb := NewPromptBuilder(cfg, db, "")
 	out, err := pb.Build("6591234567", modeSales)
 	if err != nil {
 		t.Fatal(err)
@@ -32,10 +32,10 @@ func TestBuildAgentInstructions_IncludesSoulAndClient(t *testing.T) {
 	if !strings.Contains(out, "Julia") || !strings.Contains(out, "Acme Co") {
 		t.Fatalf("missing baseline: %q", out)
 	}
-	if !strings.Contains(out, "## Soul") || !strings.Contains(out, "Vignesh") {
+	if !strings.Contains(out, "## Soul") || !strings.Contains(out, "Epicware") {
 		t.Fatalf("missing soul: %q", out)
 	}
-	if !strings.Contains(out, "## Client instructions") || !strings.Contains(out, "Test rule") {
+	if !strings.Contains(out, "## Client instructions") || !strings.Contains(out, "Universal rules") {
 		t.Fatalf("missing client instructions: %q", out)
 	}
 	if !strings.Contains(out, "julia-sales") && !strings.Contains(out, "Mode runbook") {

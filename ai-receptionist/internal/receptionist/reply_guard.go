@@ -72,27 +72,19 @@ func enforcePersona(reply, userText, businessName, businessDesc string) string {
 	lowerUser := strings.ToLower(strings.TrimSpace(userText))
 	lowerReply := strings.ToLower(r)
 
-	if asksName(lowerUser) {
-		name := strings.TrimSpace(businessName)
-		if name == "" {
-			name = "the business"
-		}
-		return "I'm Julia — " + name + "'s WhatsApp receptionist. I help with enquiries, services, and booking a call. What can I help you with?"
+	if asksName(lowerUser) || (asksIdentity(lowerUser) && (strings.Contains(lowerReply, "ai assistant") ||
+		strings.Contains(lowerReply, "don't have a personal name") ||
+		strings.Contains(lowerReply, "no personal name") ||
+		modelDisclosure.MatchString(lowerReply))) {
+		return juliaIntroReply(businessName)
 	}
 
 	if asksModel(lowerUser) {
-		return "I'm Julia, the receptionist here — Vignesh built and maintains me. I can't share technical details, but I'm happy to help with your enquiry."
-	}
-
-	if asksIdentity(lowerUser) && (strings.Contains(lowerReply, "ai assistant") ||
-		strings.Contains(lowerReply, "don't have a personal name") ||
-		strings.Contains(lowerReply, "no personal name") ||
-		modelDisclosure.MatchString(lowerReply)) {
-		return "I'm Julia, the WhatsApp receptionist for " + strings.TrimSpace(businessName) + ". I help with questions, lead details, and scheduling — what would you like to know?"
+		return "I'm Julia — Vignesh built and maintains me. That's all I can share 😊 How can I help with your enquiry?"
 	}
 
 	if modelDisclosure.MatchString(r) {
-		return "I'm Julia, the receptionist here — Vignesh built and maintains me. How can I help you today?"
+		return "I'm Julia — Vignesh built and maintains me. That's all I can share 😊 What can I help you with?"
 	}
 
 	return r
@@ -116,6 +108,14 @@ func asksModel(user string) bool {
 
 func asksIdentity(user string) bool {
 	return asksName(user) || strings.Contains(user, "who are you") || strings.Contains(user, "what are you")
+}
+
+func juliaIntroReply(businessName string) string {
+	biz := strings.TrimSpace(businessName)
+	if biz == "" {
+		biz = "Epicware"
+	}
+	return "I'm Julia — WhatsApp assistant for " + biz + " (local SEO & GBP). I help with enquiries, support questions, and booking a call. What can I help with?"
 }
 
 func fixServiceQuestionEcho(reply, userText, businessName, businessDesc string) string {

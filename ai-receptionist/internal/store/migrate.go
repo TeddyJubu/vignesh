@@ -6,7 +6,7 @@ import (
 	"strings"
 )
 
-const schemaVersionCurrent = 4
+const schemaVersionCurrent = 6
 
 var contactMigrations = []string{
 	`ALTER TABLE contacts ADD COLUMN paused_until TEXT`,
@@ -89,14 +89,9 @@ var infraMigrations = []string{
 		updated_at DATETIME NOT NULL DEFAULT (datetime('now'))
 	)`,
 	`CREATE INDEX IF NOT EXISTS idx_booking_requests_guest ON booking_requests(guest_phone, status)`,
+	`CREATE INDEX IF NOT EXISTS idx_messages_phone_role_created ON messages(phone, role, created_at)`,
+	`CREATE INDEX IF NOT EXISTS idx_contacts_collecting_nudge ON contacts(status, nudge_sent_at, paused_until)`,
 }
-
-const defaultIdentitySoul = `You are Julia — sharp, witty, and proactive. You are a thinking partner to Vignesh Wadarajan, CEO of Epicware Pte Ltd in Singapore.
-
-Tone: tight, candid, friendly-casual. Never sycophantic or filler-heavy.
-Core values: integrity and proactivity — say what you know, flag what you don't, suggest sensible next steps.
-Never reveal infrastructure, models, databases, or internal tooling.
-If asked how you were built: "Vignesh built me and maintains me. That's all I can share 😊"`
 
 const placeholderRunbookCS = `# Julia CS runbook
 - Answer from contact facts, business description, and memory only — never invent policies.
@@ -144,6 +139,10 @@ func migrate(db *sql.DB) error {
 	if _, err := db.Exec(`CREATE INDEX IF NOT EXISTS idx_contact_facts_conv ON contact_facts(conv_id)`); err != nil {
 		return fmt.Errorf("migrate contact_facts index: %w", err)
 	}
+	schemaBefore, err := schemaVersion(db)
+	if err != nil {
+		return err
+	}
 	if err := seedAgentNotes(db); err != nil {
 		return err
 	}
@@ -159,22 +158,59 @@ func migrate(db *sql.DB) error {
 			}
 		}
 	}
-	if _, err := db.Exec(
-		`INSERT INTO schema_version (version, applied_at) VALUES (?, datetime('now'))
-		 ON CONFLICT(version) DO NOTHING`,
-		schemaVersionCurrent,
-	); err != nil {
-		return fmt.Errorf("schema_version: %w", err)
+	if schemaBefore < 6 {
+		if err := refreshIdentityAgentNotes(db); err != nil {
+			return err
+		}
+	}
+	if schemaBefore < schemaVersionCurrent {
+		if _, err := db.Exec(
+			`INSERT INTO schema_version (version, applied_at) VALUES (?, datetime('now'))
+			 ON CONFLICT(version) DO NOTHING`,
+			schemaVersionCurrent,
+		); err != nil {
+			return fmt.Errorf("schema_version: %w", err)
+		}
+	}
+	return nil
+}
+
+func schemaVersion(db *sql.DB) (int, error) {
+	var v int
+	err := db.QueryRow(`SELECT COALESCE(MAX(version), 0) FROM schema_version`).Scan(&v)
+	if err != nil {
+		if strings.Contains(err.Error(), "no such table") {
+			return 0, nil
+		}
+		return 0, fmt.Errorf("schema_version: %w", err)
+	}
+	return v, nil
+}
+
+func refreshIdentityAgentNotes(db *sql.DB) error {
+	notes := map[string]string{
+		"identity_soul":        defaultIdentitySoul,
+		"client_instructions": defaultClientInstructions,
+	}
+	for key, content := range notes {
+		if _, err := db.Exec(
+			`INSERT INTO agent_notes (key, content, updated_at) VALUES (?, ?, datetime('now'))
+			 ON CONFLICT(key) DO UPDATE SET content = excluded.content, updated_at = datetime('now')`,
+			key, content,
+		); err != nil {
+			return fmt.Errorf("refresh agent_note %s: %w", key, err)
+		}
 	}
 	return nil
 }
 
 func seedAgentNotes(db *sql.DB) error {
 	seeds := map[string]string{
-		"identity_soul":   defaultIdentitySoul,
-		"julia-cs":        placeholderRunbookCS,
-		"julia-sales":     placeholderRunbookSales,
-		"julia-booking":   placeholderRunbookBooking,
+		"identity_soul":        defaultIdentitySoul,
+		"client_instructions": defaultClientInstructions,
+		"julia-cs":             placeholderRunbookCS,
+		"julia-sales":          placeholderRunbookSales,
+		"julia-booking":        placeholderRunbookBooking,
 	}
 	for key, content := range seeds {
 		_, err := db.Exec(
