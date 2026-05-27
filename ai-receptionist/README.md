@@ -71,6 +71,8 @@ Environment overrides:
 - `WHATSMEOW_DB` — default `whatsmeow.db`
 - `APP_DB` — default `database.db` (settings, dream proposals, conversations)
 - `HTTP_ADDR` — enable dashboard/API (default off; use `127.0.0.1:8080`)
+- `DASHBOARD_AUTH_TOKEN` — when set, requires token auth for the dashboard + all `/api/*` endpoints (send `Authorization: Bearer <token>` or `X-Admin-Token: <token>`)
+- `DASHBOARD_BASIC_USER`, `DASHBOARD_BASIC_PASS` — when set, requires HTTP Basic auth for the dashboard + all `/api/*` endpoints
 - `GRAPHITI_URL` — Graphiti sidecar base URL for memory ingest/recall and dream drafts (e.g. `http://127.0.0.1:8333`; see `graphiti/README.md`)
 - `MEMORY_RECALL_IN_PROMPT` — set `1` to inject Graphiti recall into the WhatsApp prompt
 - `CONFIG_PATH`, `PROMPT_PATH`, `INSTRUCTIONS_PATH` (default `knowledge/instructions.md`)

@@ -61,9 +61,11 @@ func (s *Server) Start(ctx context.Context, addr string) error {
 		mux.Handle("/", s.spaHandler(s.distDir))
 	}
 
+	handler := s.withAuth(mux)
+
 	s.httpServer = &http.Server{
 		Addr:              addr,
-		Handler:           mux,
+		Handler:           handler,
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 
@@ -86,6 +88,73 @@ func (s *Server) Shutdown(ctx context.Context) error {
 		return nil
 	}
 	return s.httpServer.Shutdown(ctx)
+}
+
+func (s *Server) withAuth(next http.Handler) http.Handler {
+	token := strings.TrimSpace(os.Getenv("DASHBOARD_AUTH_TOKEN"))
+	user := strings.TrimSpace(os.Getenv("DASHBOARD_BASIC_USER"))
+	pass := strings.TrimSpace(os.Getenv("DASHBOARD_BASIC_PASS"))
+
+	enabled := token != "" || user != "" || pass != ""
+	if !enabled {
+		return next
+	}
+
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Keep health endpoint unauthenticated for basic liveness checks.
+		if r.URL != nil && r.URL.Path == "/healthz" {
+			next.ServeHTTP(w, r)
+			return
+		}
+
+		// Option A: Bearer token or X-Admin-Token.
+		if token != "" {
+			auth := strings.TrimSpace(r.Header.Get("Authorization"))
+			if strings.HasPrefix(strings.ToLower(auth), "bearer ") {
+				if strings.TrimSpace(auth[len("bearer "):]) == token {
+					next.ServeHTTP(w, r)
+					return
+				}
+			}
+			if strings.TrimSpace(r.Header.Get("X-Admin-Token")) == token {
+				next.ServeHTTP(w, r)
+				return
+			}
+		}
+
+		// Option B: Basic auth.
+		if user != "" || pass != "" {
+			u, p, ok := r.BasicAuth()
+			if ok && subtleConstantTimeEquals(u, user) && subtleConstantTimeEquals(p, pass) {
+				next.ServeHTTP(w, r)
+				return
+			}
+		}
+
+		w.Header().Set("WWW-Authenticate", `Basic realm="ai-receptionist dashboard"`)
+		writeJSON(w, http.StatusUnauthorized, map[string]any{"error": "unauthorized"})
+	})
+}
+
+func subtleConstantTimeEquals(a, b string) bool {
+	// Avoid importing crypto/subtle just for the admin dashboard; best-effort constant time.
+	// If lengths differ, still do the loop to keep timing closer.
+	n := len(a)
+	if len(b) > n {
+		n = len(b)
+	}
+	var out byte
+	for i := 0; i < n; i++ {
+		var ca, cb byte
+		if i < len(a) {
+			ca = a[i]
+		}
+		if i < len(b) {
+			cb = b[i]
+		}
+		out |= ca ^ cb
+	}
+	return out == 0 && len(a) == len(b)
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {
