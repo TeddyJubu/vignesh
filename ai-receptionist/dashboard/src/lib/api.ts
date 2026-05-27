@@ -42,3 +42,18 @@ export async function apiFetch<T>(
   return json
 }
 
+// Convenience wrappers to normalize Go API response shapes.
+export async function getSettings() {
+  const res = await apiFetch<{ settings: Record<string, string> }>('/settings')
+  return res.settings
+}
+
+export async function putSettings(next: Record<string, string | undefined>) {
+  await apiFetch('/settings', { method: 'PUT', json: { settings: next } })
+}
+
+export async function getDreams() {
+  const res = await apiFetch<{ dreams: unknown[] }>('/dreams')
+  return res.dreams
+}
+

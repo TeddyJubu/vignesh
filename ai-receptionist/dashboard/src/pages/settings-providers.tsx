@@ -8,7 +8,7 @@ import { Label } from '@/components/ui/label'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Separator } from '@/components/ui/separator'
 import { Page, PageHeader } from '@/components/page'
-import { apiFetch } from '@/lib/api'
+import { getSettings, putSettings } from '@/lib/api'
 import type { AppSettings, ProviderId } from '@/lib/models'
 import { useApiState } from '@/lib/use-api'
 
@@ -29,7 +29,7 @@ function set(settings: AppSettings, key: string, value: string) {
 }
 
 export function SettingsProvidersPage() {
-  const state = useApiState<AppSettings>(() => apiFetch('/settings'), [])
+  const state = useApiState<AppSettings>(() => getSettings(), [])
   const [saving, setSaving] = useState(false)
   const settings = state.data ?? {}
 
@@ -41,7 +41,7 @@ export function SettingsProvidersPage() {
   async function save(next: AppSettings) {
     setSaving(true)
     try {
-      await apiFetch('/settings', { method: 'PUT', json: next })
+      await putSettings(next)
       state.setData(next)
     } finally {
       setSaving(false)

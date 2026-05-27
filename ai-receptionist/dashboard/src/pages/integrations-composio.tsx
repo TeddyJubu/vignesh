@@ -7,13 +7,13 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/ui/textarea'
 import { Page, PageHeader } from '@/components/page'
-import { apiFetch } from '@/lib/api'
+import { apiFetch, getSettings, putSettings } from '@/lib/api'
 import type { AppSettings, ComposioStatus } from '@/lib/models'
 import { useApiState } from '@/lib/use-api'
 
 export function IntegrationsComposioPage() {
   const status = useApiState<ComposioStatus>(() => apiFetch('/composio/status'), [])
-  const settings = useApiState<AppSettings>(() => apiFetch('/settings'), [])
+  const settings = useApiState<AppSettings>(() => getSettings(), [])
   const [saving, setSaving] = useState(false)
 
   const currentKey = settings.data?.['composio.api_key'] ?? ''
@@ -29,7 +29,7 @@ export function IntegrationsComposioPage() {
   async function save(next: AppSettings) {
     setSaving(true)
     try {
-      await apiFetch('/settings', { method: 'PUT', json: next })
+      await putSettings(next)
       settings.setData(next)
       await status.refresh()
     } finally {
