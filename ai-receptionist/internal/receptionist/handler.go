@@ -99,6 +99,8 @@ func (h *Handler) HandleMessage(ctx context.Context, v *events.Message) {
 	if IsResetKeyword(in.Text) {
 		if canPauseSender(in, h.cfg.OwnerNumber) {
 			h.handleReset(ctx, v, in)
+		} else {
+			_ = whatsapp.SendText(ctx, h.wa, v.Info.Chat, ownerOnlyCommandMsg)
 		}
 		return
 	}
@@ -317,23 +319,26 @@ func (h *Handler) process(ctx context.Context, v *events.Message, in whatsapp.In
 	}
 
 	if h.cfg.IsPersonal() {
-		reply = SanitizeReply(strings.TrimSpace(raw))
+		reply = FinalizeCustomerReply(strings.TrimSpace(raw), text, h.cfg.BusinessName, h.cfg.BusinessDescription, toolResults)
 	} else {
 		if !structuredOut {
-			reply = SanitizeReply(strings.TrimSpace(raw))
+			reply = FinalizeCustomerReply(strings.TrimSpace(raw), text, h.cfg.BusinessName, h.cfg.BusinessDescription, toolResults)
 			goto SEND_REPLY
 		}
 		parsed, err := h.parseStructuredWithRepair(overallCtx, raw)
 		if err != nil {
 			return err
 		}
-		reply = SanitizeReplyWithTools(parsed.Reply, toolResults)
+		reply = FinalizeCustomerReply(parsed.Reply, text, h.cfg.BusinessName, h.cfg.BusinessDescription, toolResults)
 		leadDataOut = lead.Merge(leadData, parsed.LeadUpdates)
 		qualified = lead.IsQualified(leadDataOut)
 		if parsed.Qualified {
 			qualified = true
 		}
 		summary = parsed.Summary
+		if qualified && strings.TrimSpace(summary) != "" && internalLeak.MatchString(reply) {
+			reply = deferReply
+		}
 	}
 
 SEND_REPLY:
