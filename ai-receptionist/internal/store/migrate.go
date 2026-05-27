@@ -6,7 +6,7 @@ import (
 	"strings"
 )
 
-const schemaVersionCurrent = 2
+const schemaVersionCurrent = 3
 
 var contactMigrations = []string{
 	`ALTER TABLE contacts ADD COLUMN paused_until TEXT`,
@@ -49,6 +49,20 @@ var infraMigrations = []string{
 		created_at DATETIME NOT NULL DEFAULT (datetime('now'))
 	)`,
 	`CREATE INDEX IF NOT EXISTS idx_tool_runs_conv ON tool_runs(conv_id, created_at)`,
+	`CREATE TABLE IF NOT EXISTS app_settings (
+		key TEXT PRIMARY KEY,
+		value TEXT NOT NULL DEFAULT '',
+		updated_at DATETIME NOT NULL DEFAULT (datetime('now'))
+	)`,
+	`CREATE TABLE IF NOT EXISTS dream_proposals (
+		id TEXT PRIMARY KEY,
+		created_at DATETIME NOT NULL DEFAULT (datetime('now')),
+		status TEXT NOT NULL DEFAULT 'pending',
+		title TEXT NOT NULL DEFAULT '',
+		patch TEXT NOT NULL DEFAULT '',
+		rationale TEXT NOT NULL DEFAULT ''
+	)`,
+	`CREATE INDEX IF NOT EXISTS idx_dream_proposals_created ON dream_proposals(created_at)`,
 }
 
 const defaultIdentitySoul = `You are Julia — sharp, witty, and proactive. You are a thinking partner to Vignesh Wadarajan, CEO of Epicware Pte Ltd in Singapore.

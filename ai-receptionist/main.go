@@ -7,10 +7,13 @@ import (
 	"os/signal"
 	"strings"
 	"syscall"
+	"time"
 
 	"ai-receptionist/internal/ai"
 	"ai-receptionist/internal/config"
+	"ai-receptionist/internal/httpapi"
 	"ai-receptionist/internal/receptionist"
+	"ai-receptionist/internal/settings"
 	"ai-receptionist/internal/store"
 	"ai-receptionist/internal/whatsapp"
 
@@ -38,6 +41,7 @@ func main() {
 	promptPath := envOr("PROMPT_PATH", "prompt.txt")
 	whatsmeowDB := envOr("WHATSMEOW_DB", "whatsmeow.db")
 	appDB := envOr("APP_DB", "database.db")
+	httpAddr := strings.TrimSpace(os.Getenv("HTTP_ADDR"))
 
 	cfg, err := config.Load(configPath)
 	if err != nil {
@@ -61,18 +65,19 @@ func main() {
 		os.Exit(1)
 	}
 
-	aiClient, err := ai.NewProvider(cfg)
-	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
-	}
-
 	appStore, err := store.Open(appDB)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "app db:", err)
 		os.Exit(1)
 	}
 	defer appStore.Close()
+
+	settingResolver := settings.New(appStore)
+	aiClient, err := ai.NewProviderFromSettings(cfg, settingResolver)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -91,6 +96,18 @@ func main() {
 	styleExtra := loadStyleExamples()
 	handler = receptionist.New(cfg, appStore, aiClient, waClient, promptTpl, styleExtra, instructionsMD)
 	go appStore.RunCleanupLoop(ctx, store.DefaultCleanupConfig())
+
+	var api *httpapi.Server
+	if httpAddr != "" {
+		distDir := envOr("DASHBOARD_DIST", "dashboard/dist")
+		api = httpapi.New(cfg, appStore, distDir)
+		go func() {
+			fmt.Println("HTTP API listening on", httpAddr)
+			if err := api.Start(ctx, httpAddr); err != nil {
+				fmt.Fprintln(os.Stderr, "http api:", err)
+			}
+		}()
+	}
 
 	if err := waClient.Start(ctx); err != nil {
 		fmt.Fprintln(os.Stderr, "start:", err)
@@ -122,5 +139,10 @@ func main() {
 	<-c
 	cancel()
 	fmt.Println("Shutting down...")
+	if api != nil {
+		shCtx, cancel2 := context.WithTimeout(context.Background(), 3*time.Second)
+		_ = api.Shutdown(shCtx)
+		cancel2()
+	}
 	waClient.Disconnect()
 }

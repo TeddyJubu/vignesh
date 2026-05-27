@@ -42,7 +42,13 @@ func (p *PromptBuilder) Build(convID string, mode string) (string, error) {
 		b.WriteString("\n")
 	}
 
-	if md := strings.TrimSpace(p.instructionsMD); md != "" {
+	if note, err := p.store.GetAgentNote("client_instructions"); err != nil {
+		return "", err
+	} else if md := strings.TrimSpace(note); md != "" {
+		b.WriteString("\n\n## Client instructions\n\n")
+		b.WriteString(md)
+		b.WriteString("\n")
+	} else if md := strings.TrimSpace(p.instructionsMD); md != "" {
 		b.WriteString("\n\n## Client instructions\n\n")
 		b.WriteString(md)
 		b.WriteString("\n")
