@@ -4,6 +4,7 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Separator } from '@/components/ui/separator'
 import { Page, PageHeader } from '@/components/page'
@@ -74,8 +75,10 @@ export function SettingsProvidersPage() {
           <CardTitle className="text-base">Active provider</CardTitle>
         </CardHeader>
         <CardContent className="grid gap-4 md:grid-cols-2">
-          <div className="space-y-2">
-            <div className="text-sm font-medium">Provider</div>
+          <FieldShell
+            label="Provider"
+            description="Used for new turns. Secrets can be overridden by env at runtime."
+          >
             <Select
               value={provider}
               onValueChange={(v) => { if (v) void save(set(settings, 'ai.provider', v)) }}
@@ -91,10 +94,16 @@ export function SettingsProvidersPage() {
                 ))}
               </SelectContent>
             </Select>
-          </div>
+          </FieldShell>
 
-          <div className="space-y-2">
-            <div className="text-sm font-medium">Default model</div>
+          <FieldShell
+            label="Default model"
+            description={
+              <>
+                Saved per-provider under <code>{provider}.model</code>.
+              </>
+            }
+          >
             <Input
               value={get(settings, `${provider}.model`)}
               placeholder="e.g. gpt-4.1-mini, claude-3-5-sonnet..."
@@ -102,10 +111,7 @@ export function SettingsProvidersPage() {
                 state.setData(set(settings, `${provider}.model`, e.target.value))
               }
             />
-            <div className="text-xs text-muted-foreground">
-              Saved per-provider under <code>{provider}.model</code>.
-            </div>
-          </div>
+          </FieldShell>
 
           <div className="md:col-span-2">
             <Separator className="my-2" />
@@ -118,12 +124,15 @@ export function SettingsProvidersPage() {
                 placeholder="ollama_..."
                 value={get(settings, 'ollama.api_key')}
                 onChange={(v) => state.setData(set(settings, 'ollama.api_key', v))}
+                type="password"
+                description="Stored in DB by default; env `OLLAMA_API_KEY` overrides at runtime."
               />
               <Field
                 label="Ollama Cloud API URL"
                 placeholder="https://..."
                 value={get(settings, 'ollama.api_url')}
                 onChange={(v) => state.setData(set(settings, 'ollama.api_url', v))}
+                description="Optional. Defaults to https://ollama.com/api/chat"
               />
             </>
           )}
@@ -134,6 +143,8 @@ export function SettingsProvidersPage() {
               placeholder="sk-..."
               value={get(settings, 'openai.api_key')}
               onChange={(v) => state.setData(set(settings, 'openai.api_key', v))}
+              type="password"
+              description="Stored in DB by default; env `OPENAI_API_KEY` overrides at runtime."
             />
           )}
 
@@ -145,6 +156,8 @@ export function SettingsProvidersPage() {
               onChange={(v) =>
                 state.setData(set(settings, 'anthropic.api_key', v))
               }
+              type="password"
+              description="Stored in DB by default; env `ANTHROPIC_API_KEY` overrides at runtime."
             />
           )}
 
@@ -156,6 +169,8 @@ export function SettingsProvidersPage() {
               onChange={(v) =>
                 state.setData(set(settings, 'openrouter.api_key', v))
               }
+              type="password"
+              description="Stored in DB by default; env `OPENROUTER_API_KEY` overrides at runtime."
             />
           )}
 
@@ -168,6 +183,7 @@ export function SettingsProvidersPage() {
                 onChange={(v) =>
                   state.setData(set(settings, 'custom.base_url', v))
                 }
+                description="OpenAI-compatible base URL (should include /v1)."
               />
               <Field
                 label="Custom API key"
@@ -176,6 +192,8 @@ export function SettingsProvidersPage() {
                 onChange={(v) =>
                   state.setData(set(settings, 'custom.api_key', v))
                 }
+                type="password"
+                description="Stored in DB by default; env `CUSTOM_API_KEY` overrides at runtime."
               />
             </>
           )}
@@ -201,26 +219,60 @@ export function SettingsProvidersPage() {
   )
 }
 
+function FieldShell({
+  label,
+  description,
+  children,
+  htmlFor,
+}: {
+  label: React.ReactNode
+  description?: React.ReactNode
+  children: React.ReactNode
+  htmlFor?: string
+}) {
+  return (
+    <div className="space-y-1.5">
+      <div className="flex items-center justify-between gap-2">
+        <Label htmlFor={htmlFor}>{label}</Label>
+      </div>
+      {children}
+      {description ? (
+        <div className="text-xs text-muted-foreground">{description}</div>
+      ) : null}
+    </div>
+  )
+}
+
 function Field({
   label,
   value,
   onChange,
   placeholder,
+  description,
+  type,
 }: {
   label: string
   value: string
   onChange: (v: string) => void
   placeholder?: string
+  description?: React.ReactNode
+  type?: React.ComponentProps<typeof Input>['type']
 }) {
+  const id = useMemo(
+    () => `field-${label.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`,
+    [label],
+  )
   return (
-    <div className="space-y-2">
-      <div className="text-sm font-medium">{label}</div>
+    <FieldShell label={label} description={description} htmlFor={id}>
       <Input
+        id={id}
+        type={type}
         value={value}
         placeholder={placeholder}
+        autoComplete="off"
         onChange={(e) => onChange(e.target.value)}
       />
-    </div>
+    </FieldShell>
   )
 }
 

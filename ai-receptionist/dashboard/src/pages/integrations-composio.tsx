@@ -4,6 +4,7 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/ui/textarea'
 import { Page, PageHeader } from '@/components/page'
 import { apiFetch } from '@/lib/api'
@@ -95,11 +96,14 @@ export function IntegrationsComposioPage() {
             <CardTitle className="text-base">Configuration</CardTitle>
           </CardHeader>
           <CardContent className="space-y-4">
-            <div className="space-y-2">
-              <div className="text-sm font-medium">API key</div>
+            <div className="space-y-1.5">
+              <Label htmlFor="composio-api-key">API key</Label>
               <Input
+                id="composio-api-key"
+                type="password"
                 value={currentKey}
                 placeholder="comp_..."
+                autoComplete="off"
                 onChange={(e) =>
                   settings.setData({ ...(settings.data ?? {}), 'composio.api_key': e.target.value })
                 }
@@ -109,9 +113,10 @@ export function IntegrationsComposioPage() {
               </div>
             </div>
 
-            <div className="space-y-2">
-              <div className="text-sm font-medium">Tool group allowlist</div>
+            <div className="space-y-1.5">
+              <Label htmlFor="composio-allowlist">Tool group allowlist</Label>
               <Textarea
+                id="composio-allowlist"
                 value={currentAllow}
                 placeholder="gmail, calendar, slack"
                 onChange={(e) =>

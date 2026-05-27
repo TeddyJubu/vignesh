@@ -4,6 +4,7 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Textarea } from '@/components/ui/textarea'
 import { Page, PageHeader } from '@/components/page'
@@ -165,13 +166,18 @@ export function SettingsInstructionsPage() {
           </CardHeader>
           <CardContent className="space-y-3">
             <div className="grid gap-3 sm:grid-cols-2">
-              <div className="space-y-2">
-                <div className="text-sm font-medium">Sample contact</div>
+              <div className="space-y-1.5">
+                <Label htmlFor="sample-contact">Sample contact</Label>
                 <Input
+                  id="sample-contact"
                   value={sampleContact}
                   placeholder="e.g. +15551234567"
+                  autoComplete="off"
                   onChange={(e) => setSampleContact(e.target.value)}
                 />
+                <div className="text-xs text-muted-foreground">
+                  Used only to render a preview of the built system prompt.
+                </div>
               </div>
               <div className="flex items-end justify-end">
                 <Button
