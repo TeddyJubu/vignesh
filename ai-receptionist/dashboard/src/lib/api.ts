@@ -21,7 +21,8 @@ export async function apiFetch<T>(
   const headers = new Headers(init.headers)
   if (init.json !== undefined) headers.set('content-type', 'application/json')
 
-  const res = await fetch(`/api${path}`, {
+  const base = import.meta.env.BASE_URL.replace(/\/?$/, '/')
+  const res = await fetch(`${base}api${path}`, {
     ...init,
     headers,
     body: init.json !== undefined ? JSON.stringify(init.json) : init.body,
