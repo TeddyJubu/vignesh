@@ -43,7 +43,7 @@ export function IntegrationsComposioPage() {
     <Page>
       <PageHeader
         title="Composio"
-        description="Store the Composio API key and choose which tool groups may be exposed."
+        description="Store the Composio API key. Manage integrations and tool access in the Composio dashboard."
         right={
           <Badge variant={ready ? 'default' : 'secondary'}>
             {ready ? 'Connected' : 'Not configured'}
@@ -118,17 +118,17 @@ export function IntegrationsComposioPage() {
               <Textarea
                 id="composio-allowlist"
                 value={currentAllow}
-                placeholder="gmail, calendar, slack"
+                placeholder="(optional) gmail, calendar, slack"
                 onChange={(e) =>
                   settings.setData({
                     ...(settings.data ?? {}),
-                    composio_allowlist: undefined,
                     'composio.allowlist': e.target.value,
                   })
                 }
               />
               <div className="text-xs text-muted-foreground">
-                Comma-separated. Currently: {allowlist.length ? allowlist.join(', ') : '—'}
+                Optional local safety gate. Leave blank to avoid restricting tool groups here; control tools in Composio.
+                {allowlist.length ? ` Currently: ${allowlist.join(', ')}` : ''}
               </div>
             </div>
 
