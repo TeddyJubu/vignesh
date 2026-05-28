@@ -39,7 +39,7 @@ intent=<name> conf=<0.00-1.00> summary=<short text>
 
 | # | Steps | Pass if |
 |---|--------|---------|
-| 12 | After test #1–5, open [PocketBase Admin](https://pocketbase-mqk9.srv943071.hstgr.cloud/_/) → `agent_sessions` | Row for your `wa_number` / conv id with `last_intent` and `last_summary` |
+| 12 | After test #1–5, open [PocketBase Admin](https://wabot.srv943071.hstgr.cloud/pb-admin/_/) → `agent_sessions` | Row for your `wa_number` / conv id with `last_intent` and `last_summary` |
 | 13 | Check `agent_jobs` | Recent rows with `task_type=intent_classify`, `status=classified` |
 
 ---

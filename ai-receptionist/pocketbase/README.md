@@ -2,8 +2,10 @@
 
 Production instance (Hostinger / Traefik):
 
-- **URL:** `https://pocketbase-mqk9.srv943071.hstgr.cloud`
-- **Admin UI:** open the URL in a browser (PocketBase redirects to `/_/`).
+- **Admin UI (public HTTPS):** https://wabot.srv943071.hstgr.cloud/pb-admin/_/
+- **API health:** `GET https://wabot.srv943071.hstgr.cloud/pb-admin/api/health`
+
+The Hostinger subdomain `pocketbase-mqk9.srv943071.hstgr.cloud` cannot get a new Let’s Encrypt cert (shared `hstgr.cloud` rate limit), so admin is served under the existing `wabot` certificate at `/pb-admin/`.
 - **Health:** `GET {POCKETBASE_URL}/api/health`
 
 On the `vignesh` host, PocketBase runs in Docker (`pocketbase-mqk9-pocketbase-1`) behind Traefik (`pocketbase-mqk9.srv943071.hstgr.cloud`). Compose at `/docker/pocketbase-mqk9/docker-compose.yml` pins **`127.0.0.1:8090:8090`** so the bot uses:
@@ -20,7 +22,7 @@ Set in local `.env` only — **never commit tokens or passwords**.
 
 ```bash
 # On the VPS (recommended): http://127.0.0.1:8090
-# Public admin UI: https://pocketbase-mqk9.srv943071.hstgr.cloud
+# Public admin UI: https://wabot.srv943071.hstgr.cloud/pb-admin/_/
 POCKETBASE_URL=http://127.0.0.1:8090
 POCKETBASE_TOKEN=                    # preferred: long-lived admin API token
 # POCKETBASE_ADMIN_EMAIL=            # dev: refresh token at startup
