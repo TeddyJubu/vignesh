@@ -15,9 +15,12 @@ import (
 	"ai-receptionist/internal/agent/tools"
 	"ai-receptionist/internal/ai"
 	"ai-receptionist/internal/config"
+	"ai-receptionist/internal/intent"
 	"ai-receptionist/internal/lead"
 	"ai-receptionist/internal/memory"
 	"ai-receptionist/internal/ops"
+	"ai-receptionist/internal/pb"
+	"ai-receptionist/internal/session"
 	"ai-receptionist/internal/store"
 	"ai-receptionist/internal/webhook"
 	"ai-receptionist/internal/whatsapp"
@@ -32,6 +35,7 @@ type Handler struct {
 	cfg            *config.Config
 	store          *store.DB
 	ai             ai.Provider
+	intentAI       ai.Provider
 	wa             *whatsapp.Client
 	promptTpl      string
 	styleExtra     string
@@ -41,6 +45,7 @@ type Handler struct {
 	toolReg        *tools.Registry
 	calendar       calendar.Calendar
 	graphiti       *memory.Client
+	pb             *pb.Repo
 
 	chatLocks *convCache
 	ackMu     sync.Mutex
@@ -53,12 +58,19 @@ func (h *Handler) InvalidatePromptCache() {
 	}
 }
 
-func New(cfg *config.Config, db *store.DB, aiClient ai.Provider, wa *whatsapp.Client, promptTpl, styleExtra, instructionsMD string) *Handler {
+func New(cfg *config.Config, db *store.DB, aiClient, intentAI ai.Provider, wa *whatsapp.Client, pbRepo *pb.Repo, promptTpl, styleExtra, instructionsMD string) *Handler {
 	graphitiURL := strings.TrimSpace(os.Getenv("GRAPHITI_URL"))
+	if intentAI == nil {
+		intentAI = aiClient
+	}
+	if pbRepo == nil {
+		pbRepo = pb.NewRepo(pb.NewFromEnv())
+	}
 	h := &Handler{
 		cfg:            cfg,
 		store:          db,
 		ai:             aiClient,
+		intentAI:       intentAI,
 		wa:             wa,
 		promptTpl:      promptTpl,
 		styleExtra:     styleExtra,
@@ -67,6 +79,7 @@ func New(cfg *config.Config, db *store.DB, aiClient ai.Provider, wa *whatsapp.Cl
 		toolReg:        tools.DefaultRegistry(),
 		calendar:       calendar.New(),
 		graphiti:       memory.NewClient(graphitiURL),
+		pb:             pbRepo,
 		chatLocks:      newConvCache(),
 	}
 	agent.SetDefaultRegistry(h.toolReg)
@@ -208,6 +221,66 @@ func (h *Handler) chatLock(phone string) *sync.Mutex {
 	return v.(*sync.Mutex)
 }
 
+func (h *Handler) runIntentPipeline(ctx context.Context, v *events.Message, convID, text string) (early bool, err error) {
+	echoMode := os.Getenv("ECHO_INTENT") == "1"
+
+	turns, turnErr := session.GetLastTurns(ctx, h.store, convID, historyLimit)
+	if turnErr == nil && len(turns) > 0 {
+		last := turns[len(turns)-1]
+		if last.Role == "user" && strings.TrimSpace(last.Message) == strings.TrimSpace(text) {
+			turns = turns[:len(turns)-1]
+		}
+	}
+	if turnErr != nil {
+		ops.AppendErrorLog("intent.turns", turnErr)
+		if echoMode {
+			return true, h.sendEchoReply(ctx, v, convID, intent.FallbackResult())
+		}
+		return false, nil
+	}
+
+	result, classifyErr := intent.Classify(ctx, h.intentAI, text, session.FormatLastTurnsForPrompt(turns, 5))
+	if classifyErr != nil {
+		ops.AppendErrorLog("intent.classify", classifyErr)
+		if echoMode {
+			return true, h.sendEchoReply(ctx, v, convID, intent.FallbackResult())
+		}
+		return false, nil
+	}
+
+	if h.pb != nil {
+		if err := h.pb.UpsertSession(ctx, convID, result.Intent, result.Summary); err != nil {
+			ops.AppendErrorLog("pb.session", err)
+		}
+		payload := map[string]any{
+			"intent":     result.Intent,
+			"confidence": result.Confidence,
+			"summary":    result.Summary,
+			"message":    text,
+		}
+		if _, err := h.pb.InsertJob(ctx, convID, "intent_classify", payload); err != nil {
+			ops.AppendErrorLog("pb.job", err)
+		}
+	}
+
+	if echoMode {
+		return true, h.sendEchoReply(ctx, v, convID, result)
+	}
+	return false, nil
+}
+
+func (h *Handler) sendEchoReply(ctx context.Context, v *events.Message, convID string, r intent.Result) error {
+	reply := intent.EchoLine(r)
+	if err := h.store.InsertMessage(convID, "assistant", reply); err != nil {
+		return err
+	}
+	if err := whatsapp.SendText(ctx, h.wa, v.Info.Chat, reply); err != nil {
+		return err
+	}
+	_ = h.store.TouchLastBotReply(convID)
+	return nil
+}
+
 func (h *Handler) parseStructuredWithRepair(ctx context.Context, raw string) (*ai.StructuredResponse, error) {
 	parsed, err := ai.DecodeStructured(raw)
 	if err == nil {
@@ -267,6 +340,12 @@ func (h *Handler) process(ctx context.Context, v *events.Message, in whatsapp.In
 
 	if err := h.store.InsertMessage(convID, "user", text); err != nil {
 		return err
+	}
+
+	if early, err := h.runIntentPipeline(ctx, v, convID, text); err != nil {
+		return err
+	} else if early {
+		return nil
 	}
 
 	history, err := h.store.RecentMessages(convID, historyLimit)

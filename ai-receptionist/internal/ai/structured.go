@@ -52,3 +52,16 @@ func RepairStructuredPrompt(invalid string) []ChatMessage {
 		{Role: "user", Content: invalid},
 	}
 }
+
+// RepairIntentPrompt asks the model to fix invalid intent-classifier JSON (one retry).
+func RepairIntentPrompt(invalid string) []ChatMessage {
+	return []ChatMessage{
+		{
+			Role: "system",
+			Content: "Fix the following into ONE valid JSON object only. Schema: " +
+				`{"intent":"general","confidence":0.0,"summary":"string"}` +
+				"\nNo markdown fences.",
+		},
+		{Role: "user", Content: invalid},
+	}
+}
