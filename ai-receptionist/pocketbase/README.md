@@ -6,14 +6,22 @@ Production instance (Hostinger / Traefik):
 - **Admin UI:** open the URL in a browser (PocketBase redirects to `/_/`).
 - **Health:** `GET {POCKETBASE_URL}/api/health`
 
-On the `vignesh` host, PocketBase runs in Docker (`pocketbase-mqk9-pocketbase-1`, internal port 8090) behind Traefik with host rule `pocketbase-mqk9.srv943071.hstgr.cloud`. Local direct port (if needed on the server): `32769` → 8090.
+On the `vignesh` host, PocketBase runs in Docker (`pocketbase-mqk9-pocketbase-1`) behind Traefik (`pocketbase-mqk9.srv943071.hstgr.cloud`). Compose at `/docker/pocketbase-mqk9/docker-compose.yml` pins **`127.0.0.1:8090:8090`** so the bot uses:
+
+```bash
+POCKETBASE_URL=http://127.0.0.1:8090
+```
+
+**CLI on the server** must use the real data dir: `pocketbase superuser ... --dir=/pb_data` (not the default `/usr/local/bin/pb_data`).
 
 ## Environment (ai-receptionist)
 
 Set in local `.env` only — **never commit tokens or passwords**.
 
 ```bash
-POCKETBASE_URL=https://pocketbase-mqk9.srv943071.hstgr.cloud
+# On the VPS (recommended): http://127.0.0.1:8090
+# Public admin UI: https://pocketbase-mqk9.srv943071.hstgr.cloud
+POCKETBASE_URL=http://127.0.0.1:8090
 POCKETBASE_TOKEN=                    # preferred: long-lived admin API token
 # POCKETBASE_ADMIN_EMAIL=            # dev: refresh token at startup
 # POCKETBASE_ADMIN_PASSWORD=

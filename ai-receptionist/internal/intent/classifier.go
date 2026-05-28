@@ -37,7 +37,23 @@ Respond with ONE JSON object only (no markdown): {"intent":"...","confidence":0.
 Allowed intent values (use exactly one):
 support | sales_qualify | calendar_check | group_manage | research_request | lead_scrape | outbound_book | image_generate | general
 
-confidence is 0.0–1.0. summary is one short sentence describing what the user wants.`
+Intent definitions (pick the best match):
+- support: pricing, plans, how it works, refunds, complaints, general product/service questions
+- sales_qualify: wants to buy, book a sales/discovery call, become a lead, "interested in your services"
+- calendar_check: user's own schedule/agenda ("what am I doing tomorrow", availability check for them)
+- group_manage: WhatsApp group admin, members, group settings
+- research_request: market/competitor/ad/industry research (not scraping contact lists)
+- lead_scrape: scrape/export lists of businesses or contacts (e.g. "20 dental clinics")
+- outbound_book: bot should coordinate booking on behalf of owner with a third party (outbound scheduling)
+- image_generate: create/edit an image or creative asset
+- general: small talk or unclear
+
+Disambiguation rules:
+- "pricing", "plans", "how much" → support (NOT sales_qualify)
+- "book a meeting/call with you" or "I want to book" → sales_qualify (NOT outbound_book unless coordinating with someone else)
+- "what am I doing tomorrow" / "my calendar" → calendar_check
+
+confidence is 0.0–1.0. summary is at most ten words describing what the user wants.`
 
 // Classify runs intent classification using the given provider and conversation context.
 func Classify(ctx context.Context, p ai.Provider, message, lastTurnsText string) (Result, error) {
@@ -62,7 +78,7 @@ func Classify(ctx context.Context, p ai.Provider, message, lastTurnsText string)
 	}
 	result, err := decodeResult(raw)
 	if err == nil {
-		return normalizeResult(result), nil
+		return applyIntentHints(message, normalizeResult(result)), nil
 	}
 	repaired, err2 := p.Complete(cctx, ai.RepairIntentPrompt(raw), false)
 	if err2 != nil {
@@ -72,7 +88,7 @@ func Classify(ctx context.Context, p ai.Provider, message, lastTurnsText string)
 	if err != nil {
 		return Result{}, err
 	}
-	return normalizeResult(result), nil
+	return applyIntentHints(message, normalizeResult(result)), nil
 }
 
 func decodeResult(raw string) (Result, error) {
@@ -85,6 +101,45 @@ func decodeResult(raw string) (Result, error) {
 		return Result{}, fmt.Errorf("intent JSON missing intent")
 	}
 	return r, nil
+}
+
+// applyIntentHints corrects common model confusions using cheap phrase rules (after normalizeResult).
+func applyIntentHints(message string, r Result) Result {
+	lower := strings.ToLower(strings.TrimSpace(message))
+	switch {
+	case containsAny(lower, "pricing", "price", "plans", "how much", "cost", "package"):
+		if r.Intent == "sales_qualify" || r.Intent == "outbound_book" {
+			r.Intent = "support"
+		}
+	case containsAny(lower, "book a meeting", "book a call", "schedule a call", "want to book", "book meeting"):
+		if r.Intent == "outbound_book" || r.Intent == "calendar_check" {
+			r.Intent = "sales_qualify"
+		}
+	case containsAny(lower, "what am i doing tomorrow", "my calendar", "my schedule", "tomorrow"):
+		if r.Intent != "lead_scrape" && r.Intent != "research_request" {
+			if containsAny(lower, "tomorrow", "calendar", "schedule") && !containsAny(lower, "book a", "book meeting", "scrape", "research") {
+				r.Intent = "calendar_check"
+			}
+		}
+	case containsAny(lower, "research", "meta ad", "trends"):
+		if r.Intent == "general" || r.Intent == "support" {
+			r.Intent = "research_request"
+		}
+	case containsAny(lower, "scrape", "clinics", "dental"):
+		if containsAny(lower, "scrape") {
+			r.Intent = "lead_scrape"
+		}
+	}
+	return r
+}
+
+func containsAny(s string, subs ...string) bool {
+	for _, sub := range subs {
+		if strings.Contains(s, sub) {
+			return true
+		}
+	}
+	return false
 }
 
 func normalizeResult(r Result) Result {

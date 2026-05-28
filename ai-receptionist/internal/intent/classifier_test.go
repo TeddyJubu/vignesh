@@ -55,6 +55,27 @@ func TestDecodeResult_invalidJSON(t *testing.T) {
 	}
 }
 
+func TestApplyIntentHints_pricing(t *testing.T) {
+	got := applyIntentHints("What are your pricing plans?", Result{Intent: "sales_qualify", Confidence: 0.9, Summary: "pricing"})
+	if got.Intent != "support" {
+		t.Fatalf("intent=%q", got.Intent)
+	}
+}
+
+func TestApplyIntentHints_bookMeeting(t *testing.T) {
+	got := applyIntentHints("I want to book a meeting", Result{Intent: "outbound_book", Confidence: 0.9, Summary: "book"})
+	if got.Intent != "sales_qualify" {
+		t.Fatalf("intent=%q", got.Intent)
+	}
+}
+
+func TestApplyIntentHints_tomorrow(t *testing.T) {
+	got := applyIntentHints("What am I doing tomorrow?", Result{Intent: "general", Confidence: 0.5, Summary: "schedule"})
+	if got.Intent != "calendar_check" {
+		t.Fatalf("intent=%q", got.Intent)
+	}
+}
+
 func TestRepairIntentPrompt_roundTrip(t *testing.T) {
 	msgs := ai.RepairIntentPrompt(`{broken`)
 	if len(msgs) != 2 {
