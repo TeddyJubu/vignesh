@@ -78,6 +78,30 @@ func main() {
 
 	settingResolver := settings.New(appStore)
 	models.SetConfigModel(cfg.Model)
+	models.SetSettingsModelResolver(func() string {
+		if settingResolver == nil {
+			return ""
+		}
+		p, err := settingResolver.ResolvedAIProvider()
+		if err != nil || p == "" {
+			return ""
+		}
+		var key string
+		switch p {
+		case "openai":
+			key = "openai.model"
+		case "anthropic":
+			key = "anthropic.model"
+		case "openrouter":
+			key = "openrouter.model"
+		case "custom":
+			key = "custom.model"
+		default:
+			key = "ollama.model"
+		}
+		m, _ := settingResolver.Get(key)
+		return m
+	})
 	aiClient, err := ai.NewProviderFromSettings(cfg, settingResolver)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)

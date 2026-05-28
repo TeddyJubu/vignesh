@@ -52,14 +52,11 @@ func (r *Repo) InsertJob(ctx context.Context, waNumber, taskType string, payload
 	if payload == nil {
 		payload = map[string]any{}
 	}
-	now := time.Now().UTC().Format(time.RFC3339)
 	fields := map[string]any{
-		"wa_number":  waNumber,
-		"task_type":  taskType,
-		"payload":    payload,
-		"status":     "classified",
-		"created":    now,
-		"updated":    now,
+		"wa_number": waNumber,
+		"task_type": taskType,
+		"payload":   payload,
+		"status":    "classified",
 	}
 	return r.client.createRecord(ctx, "agent_jobs", fields)
 }
@@ -70,8 +67,7 @@ func (r *Repo) UpdateJobStatus(ctx context.Context, recordID, status string, res
 		return nil
 	}
 	fields := map[string]any{
-		"status":  status,
-		"updated": time.Now().UTC().Format(time.RFC3339),
+		"status": status,
 	}
 	if result != nil {
 		fields["result"] = result

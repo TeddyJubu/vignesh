@@ -225,6 +225,12 @@ func (h *Handler) runIntentPipeline(ctx context.Context, v *events.Message, conv
 	echoMode := os.Getenv("ECHO_INTENT") == "1"
 
 	turns, turnErr := session.GetLastTurns(ctx, h.store, convID, historyLimit)
+	if turnErr == nil && len(turns) > 0 {
+		last := turns[len(turns)-1]
+		if last.Role == "user" && strings.TrimSpace(last.Message) == strings.TrimSpace(text) {
+			turns = turns[:len(turns)-1]
+		}
+	}
 	if turnErr != nil {
 		ops.AppendErrorLog("intent.turns", turnErr)
 		if echoMode {

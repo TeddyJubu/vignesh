@@ -27,7 +27,10 @@ func TestClient_Enabled(t *testing.T) {
 	if NewClient("", "").Enabled() {
 		t.Fatal("empty url should be disabled")
 	}
+	if NewClient("http://127.0.0.1:8090", "").Enabled() {
+		t.Fatal("url without auth should be disabled")
+	}
 	if !NewClient("http://127.0.0.1:8090", "tok").Enabled() {
-		t.Fatal("expected enabled")
+		t.Fatal("expected enabled with token")
 	}
 }

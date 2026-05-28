@@ -46,7 +46,19 @@ func NewFromEnv() *Client {
 }
 
 func (c *Client) Enabled() bool {
-	return c != nil && strings.TrimSpace(c.baseURL) != ""
+	return c != nil && strings.TrimSpace(c.baseURL) != "" && c.hasAuth()
+}
+
+func (c *Client) hasAuth() bool {
+	if c == nil {
+		return false
+	}
+	if strings.TrimSpace(c.token) != "" {
+		return true
+	}
+	email := strings.TrimSpace(os.Getenv("POCKETBASE_ADMIN_EMAIL"))
+	pass := os.Getenv("POCKETBASE_ADMIN_PASSWORD")
+	return email != "" && pass != ""
 }
 
 func (c *Client) BaseURL() string {

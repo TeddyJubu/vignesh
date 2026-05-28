@@ -55,7 +55,8 @@ func Classify(ctx context.Context, p ai.Provider, message, lastTurnsText string)
 		{Role: "system", Content: classifySystemPrompt},
 		{Role: "user", Content: user},
 	}
-	raw, err := p.Complete(cctx, msgs, true)
+	// jsonMode must be false: providers map jsonMode to receptionist reply/lead_updates schema.
+	raw, err := p.Complete(cctx, msgs, false)
 	if err != nil {
 		return Result{}, err
 	}
@@ -63,9 +64,9 @@ func Classify(ctx context.Context, p ai.Provider, message, lastTurnsText string)
 	if err == nil {
 		return normalizeResult(result), nil
 	}
-	repaired, err2 := p.Complete(cctx, ai.RepairIntentPrompt(raw), true)
+	repaired, err2 := p.Complete(cctx, ai.RepairIntentPrompt(raw), false)
 	if err2 != nil {
-		return Result{}, err
+		return Result{}, err2
 	}
 	result, err = decodeResult(repaired)
 	if err != nil {

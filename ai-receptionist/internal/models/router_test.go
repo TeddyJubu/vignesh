@@ -14,10 +14,21 @@ func TestGetModel_intentClassify_envOverride(t *testing.T) {
 
 func TestGetModel_intentClassify_configDefault(t *testing.T) {
 	t.Setenv("INTENT_CLASSIFY_MODEL", "")
+	SetSettingsModelResolver(nil)
 	SetConfigModel("cfg-model")
 	if got := GetModel("intent_classify"); got != "cfg-model" {
 		t.Fatalf("got %q want cfg-model", got)
 	}
+}
+
+func TestGetModel_intentClassify_settingsResolver(t *testing.T) {
+	t.Setenv("INTENT_CLASSIFY_MODEL", "")
+	SetConfigModel("cfg-model")
+	SetSettingsModelResolver(func() string { return "dashboard-model" })
+	if got := GetModel("intent_classify"); got != "dashboard-model" {
+		t.Fatalf("got %q want dashboard-model", got)
+	}
+	SetSettingsModelResolver(nil)
 }
 
 func TestGetModel_intentClassify_fallback(t *testing.T) {
