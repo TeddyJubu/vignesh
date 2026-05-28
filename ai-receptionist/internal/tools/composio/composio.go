@@ -35,11 +35,13 @@ func (c *Client) Status(ctx context.Context, verify bool) (map[string]any, error
 		return out, nil
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "https://backend.composio.dev/api/v1/me", nil)
+	// Docs (2026): Use x-api-key auth and a lightweight session endpoint.
+	// https://docs.composio.dev/reference/api-reference/authentication/getAuthSessionInfo
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "https://backend.composio.dev/api/v3.1/auth/session/info", nil)
 	if err != nil {
 		return out, err
 	}
-	req.Header.Set("Authorization", "Bearer "+c.apiKey)
+	req.Header.Set("x-api-key", c.apiKey)
 	resp, err := c.http.Do(req)
 	if err != nil {
 		out["verify_error"] = err.Error()
