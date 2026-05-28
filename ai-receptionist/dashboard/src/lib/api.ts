@@ -28,8 +28,9 @@ export async function apiFetch<T>(
     body: init.json !== undefined ? JSON.stringify(init.json) : init.body,
   })
 
+  const body = await parseJsonSafe(res)
+
   if (!res.ok) {
-    const body = await parseJsonSafe(res)
     const msg =
       typeof body === 'object' && body && 'error' in body
         ? String((body as any).error)
@@ -38,8 +39,15 @@ export async function apiFetch<T>(
     throw err
   }
 
-  const json = (await parseJsonSafe(res)) as T
-  return json
+  if (body === undefined) {
+    const err: ApiError = {
+      status: res.status,
+      message: 'API returned a non-JSON response (is the Go server running?)',
+    }
+    throw err
+  }
+
+  return body as T
 }
 
 // Convenience wrappers to normalize Go API response shapes.
