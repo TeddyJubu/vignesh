@@ -401,16 +401,42 @@ func (s *Server) handleComposioStatus(w http.ResponseWriter, r *http.Request) {
 	}
 	key, _ := s.settings.Resolved("composio.api_key", "COMPOSIO_API_KEY")
 	verify := strings.TrimSpace(r.URL.Query().Get("verify")) == "1"
-	c := composio.New(key)
-	out, _ := c.Status(r.Context(), verify)
 
-	allowlistRaw, _ := s.store.GetAppSetting("composio.allowlist")
-	if strings.TrimSpace(allowlistRaw) != "" {
-		var list []string
-		if json.Unmarshal([]byte(allowlistRaw), &list) == nil {
-			out["allowlist"] = list
+	allowRaw, _ := s.store.GetAppSetting("composio.allowlist")
+	enabledTools := []string{}
+	for _, part := range strings.Split(allowRaw, ",") {
+		if v := strings.TrimSpace(part); v != "" {
+			enabledTools = append(enabledTools, v)
 		}
 	}
+
+	out := map[string]any{
+		"ok":            strings.TrimSpace(key) != "",
+		"enabled_tools": enabledTools,
+	}
+
+	if strings.TrimSpace(key) == "" {
+		out["message"] = "Composio is not configured. Set composio.api_key."
+		writeJSON(w, 200, out)
+		return
+	}
+
+	out["message"] = "Composio API key is configured."
+	if verify {
+		c := composio.New(key)
+		raw, _ := c.Status(r.Context(), true)
+		// Consider verification successful only on 2xx.
+		if n, ok := raw["verify_status"].(int); ok {
+			out["ok"] = n >= 200 && n < 300
+		} else if f, ok := raw["verify_status"].(float64); ok {
+			code := int(f)
+			out["ok"] = code >= 200 && code < 300
+		}
+		if err, ok := raw["verify_error"].(string); ok && strings.TrimSpace(err) != "" {
+			out["message"] = err
+		}
+	}
+
 	writeJSON(w, 200, out)
 }
 
