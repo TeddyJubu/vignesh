@@ -425,15 +425,22 @@ func (s *Server) handleComposioStatus(w http.ResponseWriter, r *http.Request) {
 	if verify {
 		c := composio.New(key)
 		raw, _ := c.Status(r.Context(), true)
+		verified := false
 		// Consider verification successful only on 2xx.
 		if n, ok := raw["verify_status"].(int); ok {
-			out["ok"] = n >= 200 && n < 300
+			verified = n >= 200 && n < 300
 		} else if f, ok := raw["verify_status"].(float64); ok {
 			code := int(f)
-			out["ok"] = code >= 200 && code < 300
+			verified = code >= 200 && code < 300
 		}
 		if err, ok := raw["verify_error"].(string); ok && strings.TrimSpace(err) != "" {
 			out["message"] = err
+			out["ok"] = false
+		} else if !verified {
+			out["message"] = "Composio verification failed."
+			out["ok"] = false
+		} else {
+			out["ok"] = true
 		}
 	}
 
