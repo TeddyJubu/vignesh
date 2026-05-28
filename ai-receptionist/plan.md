@@ -36,6 +36,109 @@ Inbound → debounce → `Handler.process()` → `ai.Complete(ctx, msgs, jsonMod
 
 ---
 
+## Day 1 (Sprint) — Foundation Checklist (SQLite last-10 + PocketBase + optional Graphiti)
+
+**Goal (Day 1 pass condition)**: any inbound WhatsApp message (DM and optionally groups) is:
+- classified into a single intent,
+- replied to with a temporary **intent echo** (scaffolding),
+- persisted: last-10 turns come from **SQLite** (`database.db`), and a summary/intent/job/session row is written to **PocketBase**,
+- and the system stays up even if PocketBase or Graphiti is unavailable.
+
+### Day 1 deliverables (adapted to this repo)
+
+- **Session context**: “last 10 turns” retrieved from `database.db` (explicit helper, consistently used).
+- **Intent classification**: classifier prompt + JSON parse, using `GetModel("intent_classify")`.
+- **Model router**: single `GetModel(taskType)` function (no scattered model strings).
+- **PocketBase**: local control plane (collections for sessions/jobs/leads/logs) + Go wrapper client.
+- **Echo intent**: temporary mode that replies with detected intent + confidence.
+- **Graphiti remains optional**: only used when `GRAPHITI_URL` is set; failures never crash the bot.
+
+### Morning block (AM) — PocketBase + schema + config surface
+
+- [ ] Add PocketBase dev/runtime notes and env vars (no secrets committed):
+  - `POCKETBASE_URL`
+  - `POCKETBASE_ADMIN_EMAIL`, `POCKETBASE_ADMIN_PASSWORD` (dev only)
+  - optional: `POCKETBASE_TOKEN` (preferred for non-interactive/prod)
+  - keep `GRAPHITI_URL` optional
+- [ ] Define PocketBase collections (migrate manually in PB UI on Day 1; automate later):
+  - `agent_sessions`: `wa_number (unique)`, `last_summary`, `last_intent`, `last_updated_at`
+  - `agent_jobs`: `wa_number`, `task_type`, `payload(json)`, `status`, `result(json)`, `error`, timestamps
+  - `lead_contacts`: `wa_number`, lead fields, `qualified`, `notified_at`
+  - `support_log`: event log fields
+  - `booking_log`: event log fields
+- [ ] Add a minimal Go `PocketBaseClient` wrapper (health check + CRUD ops needed today).
+
+### Afternoon block (PM) — Classifier + intent echo + persistence
+
+- [ ] Add `GetLastTurns(convID, 10)` helper and route classifier context through it (use last 5 in prompt).
+- [ ] Add `GetModel(taskType)` model router and enforce usage for classifier.
+- [ ] Implement intent classifier:
+  - input: `MESSAGE`, `LAST_5_TURNS`
+  - output: `{ "intent": "...", "confidence": 0..1, "summary": "<10 words>" }`
+  - intents: `support | sales_qualify | calendar_check | group_manage | research_request | lead_scrape | outbound_book | image_generate | general`
+- [ ] Implement **echo intent** mode (env flag `ECHO_INTENT=1`):
+  - reply: `intent=<...> conf=<...> summary=<...>`
+  - write to PocketBase `agent_sessions` and optional `agent_jobs` (e.g. record “classified” job)
+- [ ] Ensure failure handling:
+  - PocketBase down → still replies; logs PB error; no crash
+  - Graphiti down/unset → still replies; no crash
+
+### Day 1 tests (pass/fail)
+
+- [ ] Send: “What are your pricing plans?” → replies `intent=support`
+- [ ] Send: “I want to book a meeting” → `intent=sales_qualify`
+- [ ] Send: “What am I doing tomorrow?” → `intent=calendar_check`
+- [ ] Send: “Research Meta ad trends for F&B” → `intent=research_request`
+- [ ] Send: “Scrape 20 dental clinics in Singapore” → `intent=lead_scrape`
+- [ ] Send the same message twice → classifier prompt includes prior turns from SQLite
+- [ ] Stop PocketBase → send a message → bot still replies (no crash)
+- [ ] Verify PocketBase `agent_sessions` has a row for your WA number with `last_intent` and `last_summary`
+
+---
+
+## Day 1 file-level breakdown (exact create/edit map)
+
+### Create
+
+- `pocketbase/README.md`
+  - How to run PocketBase for dev, where to set env vars, and how to create collections.
+- `internal/models/router.go`
+  - `func GetModel(taskType string) string`
+  - include `intent_classify` mapping (and placeholders for future task types).
+- `internal/session/turns.go`
+  - `func GetLastTurns(ctx context.Context, s *store.Store, convID string, limit int) ([]store.Message, error)`
+  - normalized formatting helper for “last 5 turns” string for the classifier prompt.
+- `internal/intent/classifier.go`
+  - prompt template + JSON parse + `Classify(ctx, aiClient, message, lastTurns) (IntentResult, error)`
+  - uses `models.GetModel("intent_classify")`.
+- `internal/pb/client.go`
+  - PocketBase HTTP client (base URL, auth header, basic `Do` helper, health ping).
+- `internal/pb/repo.go`
+  - `UpsertSession(...)`, `InsertJob(...)`, `UpdateJobStatus(...)`, `UpsertLeadContact(...)`, `AppendSupportLog(...)`, `AppendBookingLog(...)`.
+
+### Edit
+
+- `main.go`
+  - read PocketBase env (`POCKETBASE_URL`, token/creds)
+  - wire `pbClient` into handler construction
+  - keep Graphiti optional (`GRAPHITI_URL` already exists)
+- `internal/receptionist/handler.go`
+  - add “Day 1 classifier-first” path:
+    - fetch last turns from SQLite
+    - classify intent
+    - if `ECHO_INTENT=1`: send echo reply and persist PB session/job; return early
+    - else: continue with existing receptionist/personal logic
+- `internal/store/*` (only if needed)
+  - ensure there is a query to fetch last N turns for a `convID` ordered by time.
+- `.env.example`
+  - add PocketBase variables + `ECHO_INTENT`
+
+### No change (Day 1)
+
+- `internal/memory/graphiti_client.go` and `graphiti/` sidecar stay optional; just ensure handler doesn’t assume it’s present.
+
+---
+
 ## 3) Goals (what “done” means)
 
 ### 3.1 OpenAI provider (in addition to Ollama)

@@ -12,7 +12,9 @@ import (
 	"ai-receptionist/internal/ai"
 	"ai-receptionist/internal/config"
 	"ai-receptionist/internal/httpapi"
+	"ai-receptionist/internal/models"
 	"ai-receptionist/internal/ops"
+	"ai-receptionist/internal/pb"
 	"ai-receptionist/internal/receptionist"
 	"ai-receptionist/internal/settings"
 	"ai-receptionist/internal/store"
@@ -75,11 +77,19 @@ func main() {
 	defer appStore.Close()
 
 	settingResolver := settings.New(appStore)
+	models.SetConfigModel(cfg.Model)
 	aiClient, err := ai.NewProviderFromSettings(cfg, settingResolver)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
+	intentAI, err := ai.NewProviderForModel(cfg, settingResolver, models.GetModel("intent_classify"))
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "intent classifier provider:", err)
+		os.Exit(1)
+	}
+	pbClient := pb.NewFromEnv()
+	pbRepo := pb.NewRepo(pbClient)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -96,7 +106,19 @@ func main() {
 	}
 
 	styleExtra := loadStyleExamples()
-	handler = receptionist.New(cfg, appStore, aiClient, waClient, promptTpl, styleExtra, instructionsMD)
+	handler = receptionist.New(cfg, appStore, aiClient, intentAI, waClient, pbRepo, promptTpl, styleExtra, instructionsMD)
+
+	pingCtx, pingCancel := context.WithTimeout(ctx, 5*time.Second)
+	if pbClient.Enabled() {
+		if err := pbClient.Ping(pingCtx); err != nil {
+			fmt.Fprintln(os.Stderr, "WARNING: PocketBase ping failed:", err)
+		} else {
+			fmt.Println("PocketBase OK (", pbClient.BaseURL(), ")")
+		}
+	} else {
+		fmt.Println("PocketBase disabled")
+	}
+	pingCancel()
 	go appStore.RunCleanupLoop(ctx, store.DefaultCleanupConfig())
 	go (&ops.AsyncWorker{
 		Store:    appStore,
