@@ -46,6 +46,13 @@ type Handler struct {
 	ackMu     sync.Mutex
 }
 
+// InvalidatePromptCache clears cached prompt fragments after dashboard instruction edits.
+func (h *Handler) InvalidatePromptCache() {
+	if h != nil && h.promptBuilder != nil {
+		h.promptBuilder.InvalidateCache()
+	}
+}
+
 func New(cfg *config.Config, db *store.DB, aiClient ai.Provider, wa *whatsapp.Client, promptTpl, styleExtra, instructionsMD string) *Handler {
 	graphitiURL := strings.TrimSpace(os.Getenv("GRAPHITI_URL"))
 	h := &Handler{
@@ -273,7 +280,7 @@ func (h *Handler) process(ctx context.Context, v *events.Message, in whatsapp.In
 		_ = h.store.SetContactMode(convID, mode)
 		contact.Mode = mode
 	}
-	system, err := h.buildSystemPrompt(convID, leadData, in, contact.Language, mode)
+	system, err := h.buildSystemPrompt(convID, leadData, in, contact.Language, mode, text)
 	if err != nil {
 		return err
 	}
@@ -310,7 +317,7 @@ func (h *Handler) process(ctx context.Context, v *events.Message, in whatsapp.In
 	if h.ai != nil {
 		providerName = h.ai.Name()
 	}
-	raw, structuredOut, intermediate, toolResults, err := h.completeWithPlanner(overallCtx, convID, msgs, !h.cfg.IsPersonal(), providerName)
+	raw, structuredOut, intermediate, toolResults, err := h.completeWithPlanner(overallCtx, convID, msgs, !h.cfg.IsPersonal(), providerName, mode, text)
 	if err != nil {
 		return err
 	}
@@ -394,11 +401,13 @@ SEND_REPLY:
 
 // completeWithPlanner returns raw AI output, whether receptionist JSON mode applies,
 // whether the reply is an intermediate planner question (not final collation), and any error.
-func (h *Handler) completeWithPlanner(ctx context.Context, convID string, msgs []ai.ChatMessage, structured bool, provider string) (raw string, structuredOut bool, intermediate bool, toolResults []agent.ToolResult, err error) {
+func (h *Handler) completeWithPlanner(ctx context.Context, convID string, msgs []ai.ChatMessage, structured bool, provider, mode, userText string) (raw string, structuredOut bool, intermediate bool, toolResults []agent.ToolResult, err error) {
+	hasPendingPlan := false
 	// Resume if we have pending agent state.
 	if st, err := h.store.GetAgentState(convID); err == nil && st != nil {
 		var state agent.State
 		if json.Unmarshal([]byte(st.StateJSON), &state) == nil && len(state.Plan.Questions) > 0 {
+			hasPendingPlan = true
 			// Consume the incoming user message as an answer to the next pending question.
 			if state.Answers == nil {
 				state.Answers = map[string]string{}
@@ -430,6 +439,16 @@ func (h *Handler) completeWithPlanner(ctx context.Context, convID string, msgs [
 		}
 	} else if err != nil && err != sql.ErrNoRows {
 		return "", false, false, nil, err
+	}
+
+	if !needsPlannerPath(mode, userText, hasPendingPlan) {
+		fastCtx, cancelFast := budgetCtx(ctx, 20*time.Second)
+		defer cancelFast()
+		fastStart := time.Now()
+		out, err := h.ai.Complete(fastCtx, msgs, structured)
+		logTurnPhase(convID, provider, "fast", fastStart, err)
+		traceTurn(h.store, convID, "fast", fastStart, err)
+		return out, structured, false, nil, err
 	}
 
 	planCtx, cancel := budgetCtx(ctx, 6*time.Second)
@@ -617,7 +636,7 @@ func planAgentTools(plan *agent.Plan) []string {
 	return out
 }
 
-func (h *Handler) buildSystemPrompt(convID string, leadData map[string]string, in whatsapp.InboundContext, language, mode string) (string, error) {
+func (h *Handler) buildSystemPrompt(convID string, leadData map[string]string, in whatsapp.InboundContext, language, mode, userText string) (string, error) {
 	stack, err := h.promptBuilder.Build(convID, mode)
 	if err != nil {
 		return "", err
@@ -637,7 +656,7 @@ func (h *Handler) buildSystemPrompt(convID string, leadData map[string]string, i
 		b.WriteString(h.styleExtra)
 		b.WriteString("\n")
 	}
-	if os.Getenv("MEMORY_RECALL_IN_PROMPT") == "1" && h.graphiti != nil && h.graphiti.Enabled() {
+	if os.Getenv("MEMORY_RECALL_IN_PROMPT") == "1" && h.graphiti != nil && h.graphiti.Enabled() && shouldRecallMemory(mode, userText) {
 		recallCtx, cancel := context.WithTimeout(context.Background(), 600*time.Millisecond)
 		defer cancel()
 		if rr, err := h.graphiti.Recall(recallCtx, convID, "", 5); err == nil && rr != nil && strings.TrimSpace(rr.Snippet) != "" {

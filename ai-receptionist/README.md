@@ -26,7 +26,7 @@ Never commit `.env`, `*.db`, or the built `ai-receptionist` binary (see `.gitign
 ```bash
 cd ai-receptionist
 cp .env.example .env
-# Edit config.json — set owner_number (digits + country code, no +)
+# cp config.example.json config.json — set owner_number (digits + country code, no +)
 export AI_PROVIDER=ollama
 export OLLAMA_API_KEY=your_key_from_ollama_com
 # Or:

@@ -6,11 +6,11 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"ai-receptionist/internal/ai"
@@ -30,7 +30,22 @@ type Server struct {
 	distDir    string
 	graphiti   *memory.Client
 	httpServer *http.Server
+
+	invalidatePrompt func()
+
+	pingMu    sync.Mutex
+	pingCache pingCacheEntry
 }
+
+type pingCacheEntry struct {
+	at       time.Time
+	provider string
+	model    string
+	ok       bool
+	errMsg   string
+}
+
+const providerPingCacheTTL = 45 * time.Second
 
 func New(cfg *config.Config, db *store.DB, distDir, graphitiURL string) *Server {
 	return &Server{
@@ -51,6 +66,7 @@ func (s *Server) Start(ctx context.Context, addr string) error {
 	mux.HandleFunc("/api/dreams/", s.handleDreamByID)
 	mux.HandleFunc("/api/memory/ingest", s.handleMemoryIngest)
 	mux.HandleFunc("/api/memory/recall", s.handleMemoryRecall)
+	mux.HandleFunc("/api/providers/status", s.handleProviderStatus)
 	mux.HandleFunc("/api/providers/ping", s.handleProviderPing)
 	mux.HandleFunc("/api/composio/status", s.handleComposioStatus)
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
@@ -81,6 +97,11 @@ func (s *Server) Start(ctx context.Context, addr string) error {
 		return nil
 	}
 	return err
+}
+
+// SetPromptInvalidator clears cached prompt fragments when dashboard instructions change.
+func (s *Server) SetPromptInvalidator(fn func()) {
+	s.invalidatePrompt = fn
 }
 
 func (s *Server) Shutdown(ctx context.Context) error {
@@ -227,6 +248,9 @@ func (s *Server) handleInstructions(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 		}
+		if s.invalidatePrompt != nil {
+			s.invalidatePrompt()
+		}
 		writeJSON(w, 200, map[string]any{"ok": true})
 	default:
 		w.WriteHeader(http.StatusMethodNotAllowed)
@@ -293,6 +317,9 @@ func (s *Server) handleDreamByID(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 500, map[string]any{"error": err.Error()})
 		return
 	}
+	if s.invalidatePrompt != nil {
+		s.invalidatePrompt()
+	}
 	_ = s.store.UpdateDreamProposalStatus(id, "applied")
 	writeJSON(w, 200, map[string]any{"ok": true})
 }
@@ -302,6 +329,31 @@ func (s *Server) handleProviderPing(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusMethodNotAllowed)
 		return
 	}
+	force := strings.TrimSpace(r.URL.Query().Get("force")) == "1"
+	now := time.Now()
+
+	s.pingMu.Lock()
+	if !force && !s.pingCache.at.IsZero() && now.Sub(s.pingCache.at) < providerPingCacheTTL {
+		cached := s.pingCache
+		s.pingMu.Unlock()
+		out := map[string]any{
+			"ok":       cached.ok,
+			"provider": cached.provider,
+			"cached":   true,
+		}
+		if cached.model != "" {
+			out["model"] = cached.model
+		}
+		if cached.errMsg != "" {
+			out["message"] = cached.errMsg
+			out["error"] = cached.errMsg
+		}
+		writeJSON(w, 200, out)
+		return
+	}
+	s.pingMu.Unlock()
+
+	st := resolveProviderStatus(s.settings, s.cfg.ResolvedAIProvider(), s.cfg.Model)
 	p, err := ai.NewProviderFromSettings(s.cfg, s.settings)
 	if err != nil {
 		writeJSON(w, 500, map[string]any{"ok": false, "error": err.Error()})
@@ -309,11 +361,37 @@ func (s *Server) handleProviderPing(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 20*time.Second)
 	defer cancel()
-	if err := p.Ping(ctx); err != nil {
-		writeJSON(w, 200, map[string]any{"ok": false, "provider": p.Name(), "error": err.Error()})
+	pingErr := p.Ping(ctx)
+	providerName := p.Name()
+	if providerName == "" {
+		providerName = st.Provider
+	}
+
+	entry := pingCacheEntry{
+		at:       now,
+		provider: providerName,
+		model:    st.Model,
+		ok:       pingErr == nil,
+	}
+	if pingErr != nil {
+		entry.errMsg = pingErr.Error()
+	}
+
+	s.pingMu.Lock()
+	s.pingCache = entry
+	s.pingMu.Unlock()
+
+	if pingErr != nil {
+		writeJSON(w, 200, map[string]any{
+			"ok":       false,
+			"provider": providerName,
+			"model":    st.Model,
+			"error":    pingErr.Error(),
+			"message":  pingErr.Error(),
+		})
 		return
 	}
-	writeJSON(w, 200, map[string]any{"ok": true, "provider": p.Name()})
+	writeJSON(w, 200, map[string]any{"ok": true, "provider": providerName, "model": st.Model})
 }
 
 func (s *Server) handleComposioStatus(w http.ResponseWriter, r *http.Request) {
@@ -338,35 +416,24 @@ func (s *Server) handleComposioStatus(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) spaHandler(distDir string) http.Handler {
 	distDir = strings.TrimSpace(distDir)
-	fs := http.Dir(distDir)
-	fileServer := http.FileServer(fs)
+	fileServer := http.FileServer(http.Dir(distDir))
 
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if strings.HasPrefix(r.URL.Path, "/api/") {
 			writeJSON(w, 404, map[string]any{"error": "not found"})
 			return
 		}
-		path := filepath.Clean(strings.TrimPrefix(r.URL.Path, "/"))
-		if path == "." || path == "/" || path == "" {
-			path = "index.html"
+		rel := strings.TrimPrefix(filepath.Clean("/"+strings.TrimPrefix(r.URL.Path, "/")), "/")
+		if rel == "" || rel == "." {
+			rel = "index.html"
 		}
-		// If the asset exists, serve it. Otherwise fallback to index.html for SPA routes.
-		if f, err := fs.Open(path); err == nil {
-			_ = f.Close()
+		candidate := filepath.Join(distDir, rel)
+		if info, err := os.Stat(candidate); err == nil && !info.IsDir() {
 			fileServer.ServeHTTP(w, r)
 			return
 		}
-		r2 := new(http.Request)
-		*r2 = *r
-		r2.URL = newCopyURL(r.URL)
-		r2.URL.Path = "/index.html"
-		fileServer.ServeHTTP(w, r2)
+		http.ServeFile(w, r, filepath.Join(distDir, "index.html"))
 	})
-}
-
-func newCopyURL(u *url.URL) *url.URL {
-	c := *u
-	return &c
 }
 
 func DefaultAddr() string {

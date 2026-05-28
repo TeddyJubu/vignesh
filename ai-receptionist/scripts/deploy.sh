@@ -14,9 +14,11 @@ rsync -az --delete \
   --exclude '.env' \
   "${ROOT}/" "${SSH_HOST}:${REMOTE_DIR}/src/"
 
-echo "→ copy config + prompts"
-scp "${ROOT}/config.json" "${SSH_HOST}:${REMOTE_DIR}/config.json"
+echo "→ copy prompts (server config.json is never overwritten from local)"
 scp "${ROOT}/prompt.txt" "${ROOT}/prompt-personal.txt" "${SSH_HOST}:${REMOTE_DIR}/"
+ssh "${SSH_HOST}" "mkdir -p ${REMOTE_DIR}/knowledge"
+scp "${ROOT}/knowledge/instructions.md" "${SSH_HOST}:${REMOTE_DIR}/knowledge/instructions.md"
+ssh "${SSH_HOST}" "test -f ${REMOTE_DIR}/config.json || cp ${REMOTE_DIR}/src/config.example.json ${REMOTE_DIR}/config.json"
 
 echo "→ build on server (CGO/sqlite)"
 ssh "${SSH_HOST}" "cd ${REMOTE_DIR}/src && go build -o ${REMOTE_DIR}/ai-receptionist ."

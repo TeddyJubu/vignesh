@@ -120,52 +120,15 @@ func (d *DB) PurgeStaleAgentStates(ttl time.Duration) (int64, error) {
 
 // CapMessagesPerContact keeps only the newest limit rows per phone.
 func (d *DB) CapMessagesPerContact(limit int) (int64, error) {
-	phones, err := d.listMessagePhones()
-	if err != nil {
-		return 0, err
-	}
-	var total int64
-	for _, phone := range phones {
-		n, err := d.trimMessagesForPhone(phone, limit)
-		if err != nil {
-			return total, err
-		}
-		total += n
-	}
-	return total, nil
-}
-
-func (d *DB) listMessagePhones() ([]string, error) {
-	rows, err := d.db.Query(`SELECT DISTINCT phone FROM messages`)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var out []string
-	for rows.Next() {
-		var p string
-		if err := rows.Scan(&p); err != nil {
-			return nil, err
-		}
-		out = append(out, p)
-	}
-	return out, rows.Err()
-}
-
-func (d *DB) trimMessagesForPhone(phone string, limit int) (int64, error) {
-	var count int
-	if err := d.db.QueryRow(`SELECT COUNT(*) FROM messages WHERE phone = ?`, phone).Scan(&count); err != nil {
-		return 0, err
-	}
-	if count <= limit {
-		return 0, nil
-	}
-	excess := count - limit
 	res, err := d.db.Exec(
 		`DELETE FROM messages WHERE id IN (
-			SELECT id FROM messages WHERE phone = ? ORDER BY created_at ASC LIMIT ?
+			SELECT id FROM (
+				SELECT id,
+				       ROW_NUMBER() OVER (PARTITION BY phone ORDER BY datetime(created_at) DESC) AS rn
+				FROM messages
+			) ranked WHERE rn > ?
 		)`,
-		phone, excess,
+		limit,
 	)
 	if err != nil {
 		return 0, err

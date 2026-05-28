@@ -4,16 +4,27 @@ import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Page, PageHeader } from '@/components/page'
 import { apiFetch } from '@/lib/api'
-import type { ComposioStatus, ProviderPing } from '@/lib/models'
+import type { ComposioStatus, ProviderPing, ProviderStatus } from '@/lib/models'
 import { useApiState } from '@/lib/use-api'
-import { RefreshCcw } from 'lucide-react'
+import { Activity, RefreshCcw } from 'lucide-react'
 
 export function OverviewPage() {
-  const ping = useApiState<ProviderPing>(() => apiFetch('/providers/ping'), [])
+  const status = useApiState<ProviderStatus>(() => apiFetch('/providers/status'), [])
+  const ping = useApiState<ProviderPing>(
+    () => apiFetch('/providers/ping?force=1'),
+    [],
+    { autoLoad: false },
+  )
   const composio = useApiState<ComposioStatus>(
     () => apiFetch('/composio/status'),
     [],
   )
+
+  const providerHealthy = ping.data?.ok === true
+  const providerLabel =
+    ping.data?.provider ?? status.data?.provider ?? '—'
+  const modelLabel = ping.data?.model ?? status.data?.model ?? '—'
+  const configured = status.data?.configured === true
 
   return (
     <Page>
@@ -25,7 +36,7 @@ export function OverviewPage() {
             variant="secondary"
             size="sm"
             onClick={() => {
-              void ping.refresh()
+              void status.refresh()
               void composio.refresh()
             }}
           >
@@ -35,7 +46,7 @@ export function OverviewPage() {
         }
       />
 
-      {(ping.error || composio.error) && (
+      {(status.error || composio.error) && (
         <Alert>
           <AlertTitle>API not reachable</AlertTitle>
           <AlertDescription>
@@ -49,22 +60,44 @@ export function OverviewPage() {
         <Card>
           <CardHeader className="flex flex-row items-start justify-between gap-2">
             <CardTitle className="text-base">Provider</CardTitle>
-            <Badge variant={ping.data?.ok ? 'default' : 'secondary'}>
-              {ping.data?.ok ? 'Healthy' : 'Unknown'}
+            <Badge
+              variant={
+                providerHealthy
+                  ? 'default'
+                  : configured
+                    ? 'secondary'
+                    : 'outline'
+              }
+            >
+              {providerHealthy
+                ? 'Healthy'
+                : configured
+                  ? 'Configured'
+                  : 'Not configured'}
             </Badge>
           </CardHeader>
-          <CardContent className="space-y-2 text-sm">
+          <CardContent className="space-y-3 text-sm">
             <div className="flex items-center justify-between">
               <div className="text-muted-foreground">Current</div>
-              <div className="font-medium">{ping.data?.provider ?? '—'}</div>
+              <div className="font-medium">{providerLabel}</div>
             </div>
             <div className="flex items-center justify-between">
               <div className="text-muted-foreground">Model</div>
-              <div className="font-medium">{ping.data?.model ?? '—'}</div>
+              <div className="font-medium">{modelLabel}</div>
             </div>
             {ping.data?.message ? (
               <div className="text-muted-foreground">{ping.data.message}</div>
             ) : null}
+            <Button
+              variant="outline"
+              size="sm"
+              className="w-full"
+              disabled={ping.loading}
+              onClick={() => void ping.refresh()}
+            >
+              <Activity className="mr-2 h-4 w-4" />
+              {ping.loading ? 'Testing connection…' : 'Test connection'}
+            </Button>
           </CardContent>
         </Card>
 
@@ -97,4 +130,3 @@ export function OverviewPage() {
     </Page>
   )
 }
-
