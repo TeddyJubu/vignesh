@@ -78,6 +78,11 @@ func main() {
 
 	settingResolver := settings.New(appStore)
 	models.SetConfigModel(cfg.Model)
+	if p, err := settingResolver.ResolvedAIProvider(); err == nil && p != "" {
+		models.SetActiveProvider(p)
+	} else {
+		models.SetActiveProvider(cfg.ResolvedAIProvider())
+	}
 	models.SetSettingsModelResolver(func() string {
 		if settingResolver == nil {
 			return ""
@@ -112,6 +117,16 @@ func main() {
 		fmt.Fprintln(os.Stderr, "intent classifier provider:", err)
 		os.Exit(1)
 	}
+	plannerAI, err := ai.NewProviderForModel(cfg, settingResolver, models.GetModel("planner"))
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "planner provider:", err)
+		os.Exit(1)
+	}
+	collateAI, err := ai.NewProviderForModel(cfg, settingResolver, models.GetModel("collate"))
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "collate provider:", err)
+		os.Exit(1)
+	}
 	pbClient := pb.NewFromEnv()
 	pbRepo := pb.NewRepo(pbClient)
 
@@ -130,7 +145,7 @@ func main() {
 	}
 
 	styleExtra := loadStyleExamples()
-	handler = receptionist.New(cfg, appStore, aiClient, intentAI, waClient, pbRepo, promptTpl, styleExtra, instructionsMD)
+	handler = receptionist.New(cfg, appStore, aiClient, intentAI, plannerAI, collateAI, waClient, pbRepo, promptTpl, styleExtra, instructionsMD)
 
 	pingCtx, pingCancel := context.WithTimeout(ctx, 5*time.Second)
 	if pbClient.Enabled() {

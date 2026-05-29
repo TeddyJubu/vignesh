@@ -13,7 +13,7 @@ import (
 	"ai-receptionist/internal/ops"
 )
 
-const defaultAnthropicModel = "claude-3-5-sonnet-latest"
+const defaultAnthropicModel = "claude-sonnet-4-6"
 
 type AnthropicProvider struct {
 	apiKey string

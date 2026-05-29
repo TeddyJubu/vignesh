@@ -106,7 +106,7 @@ export function SettingsProvidersPage() {
           >
             <Input
               value={get(settings, `${provider}.model`)}
-              placeholder="e.g. gpt-4.1-mini, claude-3-5-sonnet..."
+              placeholder="e.g. nemotron-3-super:cloud, claude-sonnet-4-6"
               onChange={(e) =>
                 state.setData(set(settings, `${provider}.model`, e.target.value))
               }

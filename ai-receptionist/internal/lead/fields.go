@@ -5,6 +5,7 @@ import "strings"
 // Required fields for qualification.
 var Required = []string{
 	"name",
+	"email",
 	"business_type",
 	"service_needed",
 	"budget",
