@@ -101,6 +101,39 @@ func TestExecuteTool(t *testing.T) {
 	}
 }
 
+func TestResolveConnectedAccountWithUser_prefersConfiguredUser(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"items": []map[string]any{
+				{
+					"id":      "cal-other",
+					"user_id": "other-user",
+					"status":  "ACTIVE",
+					"toolkit": map[string]string{"slug": "googlecalendar"},
+				},
+				{
+					"id":      "cal-vignesh",
+					"user_id": "vignesh-user",
+					"status":  "ACTIVE",
+					"toolkit": map[string]string{"slug": "googlecalendar"},
+				},
+			},
+		})
+	}))
+	defer srv.Close()
+
+	c := New("test-key")
+	c.baseURL = strings.TrimSuffix(srv.URL, "") + "/api/v3.1"
+
+	id, uid, err := c.ResolveConnectedAccountWithUser(context.Background(), "googlecalendar", "", "vignesh-user")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if id != "cal-vignesh" || uid != "vignesh-user" {
+		t.Fatalf("got id=%q uid=%q", id, uid)
+	}
+}
+
 func TestNormalizeToolkitSlug(t *testing.T) {
 	cases := map[string]string{
 		"GOOGLECALENDAR": "googlecalendar",

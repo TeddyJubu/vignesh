@@ -143,12 +143,12 @@ func (c *Client) ListConnectedAccounts(ctx context.Context, toolkitSlug string, 
 
 // ResolveConnectedAccount returns explicit ID or first ACTIVE account for toolkit.
 func (c *Client) ResolveConnectedAccount(ctx context.Context, toolkitSlug, explicitID string) (string, error) {
-	id, _, err := c.ResolveConnectedAccountWithUser(ctx, toolkitSlug, explicitID)
+	id, _, err := c.ResolveConnectedAccountWithUser(ctx, toolkitSlug, explicitID, "")
 	return id, err
 }
 
 // ResolveConnectedAccountWithUser returns account ID and Composio user ID for tool execution.
-func (c *Client) ResolveConnectedAccountWithUser(ctx context.Context, toolkitSlug, explicitID string) (accountID, userID string, err error) {
+func (c *Client) ResolveConnectedAccountWithUser(ctx context.Context, toolkitSlug, explicitID, preferredUserID string) (accountID, userID string, err error) {
 	if id := strings.TrimSpace(explicitID); id != "" {
 		return id, "", nil
 	}
@@ -157,10 +157,15 @@ func (c *Client) ResolveConnectedAccountWithUser(ctx context.Context, toolkitSlu
 	if err != nil {
 		return "", "", err
 	}
+	preferredUserID = strings.TrimSpace(preferredUserID)
 	for _, acct := range accounts {
-		if strings.EqualFold(acct.Status, "ACTIVE") {
-			return acct.ID, acct.UserID, nil
+		if !strings.EqualFold(acct.Status, "ACTIVE") {
+			continue
 		}
+		if preferredUserID != "" && preferredUserID != "default" && acct.UserID != preferredUserID {
+			continue
+		}
+		return acct.ID, acct.UserID, nil
 	}
 	return "", "", fmt.Errorf("no active Composio connected account for toolkit %q", slug)
 }
@@ -247,13 +252,13 @@ func (c *Client) ResolveConfig(ctx context.Context, cfg Config) Config {
 		return out
 	}
 	if out.CalendarAccountID == "" {
-		if id, uid, err := c.ResolveConnectedAccountWithUser(ctx, "googlecalendar", ""); err == nil {
+		if id, uid, err := c.ResolveConnectedAccountWithUser(ctx, "googlecalendar", "", out.UserID); err == nil {
 			out.CalendarAccountID = id
 			out.UserID = preferComposioUserID(out.UserID, uid)
 		}
 	}
 	if out.GmailAccountID == "" {
-		if id, uid, err := c.ResolveConnectedAccountWithUser(ctx, "gmail", ""); err == nil {
+		if id, uid, err := c.ResolveConnectedAccountWithUser(ctx, "gmail", "", out.UserID); err == nil {
 			out.GmailAccountID = id
 			out.UserID = preferComposioUserID(out.UserID, uid)
 		}

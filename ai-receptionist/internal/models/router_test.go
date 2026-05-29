@@ -61,3 +61,12 @@ func TestGetModel_planner_anthropicDefaultWhenUnset(t *testing.T) {
 		t.Fatalf("got %q", got)
 	}
 }
+
+func TestGetModel_planner_anthropicIgnoresOllamaConfigModel(t *testing.T) {
+	SetActiveProvider("anthropic")
+	SetConfigModel("nemotron-3-super:cloud")
+	SetSettingsModelResolver(nil)
+	if got := GetModel("planner"); got != AnthropicModelSonnet {
+		t.Fatalf("got %q want %q", got, AnthropicModelSonnet)
+	}
+}

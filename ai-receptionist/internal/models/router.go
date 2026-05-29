@@ -103,7 +103,7 @@ func modelForIntentClassify() string {
 }
 
 func modelForMainWork() string {
-	if m := dashboardOrConfigModel(); m != "" {
+	if m := dashboardOrConfigModel(); m != "" && modelMatchesProvider(m, ActiveProvider()) {
 		return m
 	}
 	switch ActiveProvider() {
@@ -112,7 +112,22 @@ func modelForMainWork() string {
 	case "openai":
 		return OpenAIModelMain
 	default:
+		if m := dashboardOrConfigModel(); m != "" {
+			return m
+		}
 		return OllamaModelDefault
+	}
+}
+
+func modelMatchesProvider(model, provider string) bool {
+	m := strings.ToLower(strings.TrimSpace(model))
+	switch strings.ToLower(strings.TrimSpace(provider)) {
+	case "anthropic":
+		return strings.HasPrefix(m, "claude")
+	case "openai":
+		return strings.HasPrefix(m, "gpt-") || strings.HasPrefix(m, "o1") || strings.HasPrefix(m, "o3")
+	default:
+		return true
 	}
 }
 

@@ -34,8 +34,8 @@ func TestNormalizePlan_TruncatesAgentsAndClearsWhenQuestions(t *testing.T) {
 		Questions: []string{"What day?"},
 	}
 	NormalizePlan(p, true)
-	if len(p.Agents) != 0 {
-		t.Fatalf("agents should clear when questions present, got %d", len(p.Agents))
+	if len(p.Agents) != MaxPlannerAgents {
+		t.Fatalf("agents should truncate when questions present, got %d", len(p.Agents))
 	}
 	if p.FinalResponseMode != "structured" {
 		t.Fatalf("mode=%q", p.FinalResponseMode)

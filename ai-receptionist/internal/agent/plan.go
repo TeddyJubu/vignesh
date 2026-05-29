@@ -63,9 +63,12 @@ func NormalizePlan(p *Plan, structured bool) {
 	if structured {
 		p.FinalResponseMode = "structured"
 	}
-	// Planner rule: collect user info first — drop agents when questions are pending.
+	// Planner rule: collect user info first — defer agents until questions are answered,
+	// but keep them on the plan so resume can run tools after Q&A.
 	if len(p.Questions) > 0 {
-		p.Agents = nil
+		if len(p.Agents) > MaxPlannerAgents {
+			p.Agents = p.Agents[:MaxPlannerAgents]
+		}
 		return
 	}
 	filtered := p.Agents[:0]
