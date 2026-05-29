@@ -556,35 +556,37 @@ func (h *Handler) completeWithPlanner(ctx context.Context, convID string, msgs [
 			if isStaleAgentState(state) {
 				_ = h.store.ClearAgentState(convID)
 			} else {
-			hasPendingPlan = true
-			// Consume the incoming user message as an answer to the next pending question.
-			if state.Answers == nil {
-				state.Answers = map[string]string{}
-			}
-			if state.NextQIndex < 0 {
-				state.NextQIndex = 0
-			}
-			if state.NextQIndex < len(state.Plan.Questions) {
-				// The actual answer text is always the last user message in msgs.
-				if len(msgs) > 0 {
-					last := msgs[len(msgs)-1]
-					if strings.ToLower(last.Role) == "user" {
-						q := state.Plan.Questions[state.NextQIndex]
-						state.Answers[q] = last.Content
-						state.NextQIndex++
+				hasPendingPlan = true
+				// Consume the incoming user message as an answer to the next pending question.
+				if state.Answers == nil {
+					state.Answers = map[string]string{}
+				}
+				if state.NextQIndex < 0 {
+					state.NextQIndex = 0
+				}
+				if state.NextQIndex < len(state.Plan.Questions) {
+					// The actual answer text is always the last user message in msgs.
+					if len(msgs) > 0 {
+						last := msgs[len(msgs)-1]
+						if strings.ToLower(last.Role) == "user" {
+							q := state.Plan.Questions[state.NextQIndex]
+							state.Answers[q] = last.Content
+							state.NextQIndex++
+						}
 					}
 				}
-			}
-			if state.NextQIndex < len(state.Plan.Questions) {
-				// Ask the next question and persist state.
-				if err := h.store.UpsertAgentState(convID, state); err != nil {
-					return "", false, true, nil, err
+				if state.NextQIndex < len(state.Plan.Questions) {
+					// Ask the next question and persist state.
+					if err := h.store.UpsertAgentState(convID, state); err != nil {
+						return "", false, true, nil, err
+					}
+					return state.Plan.Questions[state.NextQIndex], false, true, nil, nil
 				}
-				return state.Plan.Questions[state.NextQIndex], false, true, nil, nil
-			}
-			// Done collecting answers — run tools + collate (keep state until final send succeeds).
-			out, results, err := h.runPlanAndCollate(ctx, convID, &state.Plan, state.Answers, structured, provider)
-			return out, true, false, results, err
+				// Done collecting answers — run tools + collate (keep state until final send succeeds).
+				state.Plan.Questions = nil
+				agent.NormalizePlan(&state.Plan, structured)
+				out, results, err := h.runPlanAndCollate(ctx, convID, &state.Plan, state.Answers, structured, provider)
+				return out, true, false, results, err
 			}
 		}
 	} else if err != nil && err != sql.ErrNoRows {
