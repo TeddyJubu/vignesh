@@ -68,7 +68,36 @@ func SetGroupName(ctx context.Context, wa *Client, groupJID, name string) error 
 	return wa.WM.SetGroupName(ctx, jid, strings.TrimSpace(name))
 }
 
-// GetGroupInviteLink returns the invite link for a group.
+// RemoveGroupParticipants removes phones from a group.
+func RemoveGroupParticipants(ctx context.Context, wa *Client, groupJID string, phones []string) error {
+	if wa == nil || wa.WM == nil {
+		return fmt.Errorf("whatsapp client not ready")
+	}
+	jid, err := types.ParseJID(groupJID)
+	if err != nil {
+		return err
+	}
+	var participants []types.JID
+	for _, p := range phones {
+		p = strings.TrimSpace(p)
+		if p == "" {
+			continue
+		}
+		participants = append(participants, PhoneToJID(p))
+	}
+	_, err = wa.WM.UpdateGroupParticipants(ctx, jid, participants, whatsmeow.ParticipantChangeRemove)
+	return err
+}
+
+// SendGroupText posts a message to a group JID string.
+func SendGroupText(ctx context.Context, wa *Client, groupJID, text string) error {
+	jid, err := types.ParseJID(groupJID)
+	if err != nil {
+		return err
+	}
+	return SendText(ctx, wa, jid, text)
+}
+
 func GetGroupInviteLink(ctx context.Context, wa *Client, groupJID string) (string, error) {
 	if wa == nil || wa.WM == nil {
 		return "", fmt.Errorf("whatsapp client not ready")

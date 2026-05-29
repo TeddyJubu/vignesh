@@ -112,7 +112,11 @@ func applyIntentHints(message string, r Result) Result {
 			r.Intent = "support"
 		}
 	case containsAny(lower, "book a meeting", "book a call", "schedule a call", "want to book", "book meeting"):
-		if r.Intent == "outbound_book" || r.Intent == "calendar_check" {
+		if isThirdPartyBooking(lower) {
+			if r.Intent == "sales_qualify" || r.Intent == "general" {
+				r.Intent = "outbound_book"
+			}
+		} else if r.Intent == "outbound_book" || r.Intent == "calendar_check" {
 			r.Intent = "sales_qualify"
 		}
 	case containsAny(lower, "what am i doing tomorrow", "my calendar", "my schedule", "tomorrow"):
@@ -137,6 +141,30 @@ func containsAny(s string, subs ...string) bool {
 	for _, sub := range subs {
 		if strings.Contains(s, sub) {
 			return true
+		}
+	}
+	return false
+}
+
+func isThirdPartyBooking(lower string) bool {
+	if strings.Contains(lower, "book with ") {
+		return true
+	}
+	if strings.Contains(lower, "meeting with ") && !strings.Contains(lower, "with you") {
+		return true
+	}
+	// phone number present with book/meeting context
+	if strings.Contains(lower, "book") || strings.Contains(lower, "meeting") || strings.Contains(lower, "call with") {
+		for _, tok := range strings.Fields(lower) {
+			digits := 0
+			for _, r := range tok {
+				if r >= '0' && r <= '9' {
+					digits++
+				}
+			}
+			if digits >= 8 {
+				return true
+			}
 		}
 	}
 	return false

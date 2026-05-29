@@ -9,6 +9,7 @@ import (
 	"syscall"
 	"time"
 
+	"ai-receptionist/internal/adapters/calendar"
 	"ai-receptionist/internal/ai"
 	"ai-receptionist/internal/config"
 	"ai-receptionist/internal/httpapi"
@@ -18,6 +19,7 @@ import (
 	"ai-receptionist/internal/receptionist"
 	"ai-receptionist/internal/settings"
 	"ai-receptionist/internal/store"
+	"ai-receptionist/internal/tools/composio"
 	"ai-receptionist/internal/whatsapp"
 
 	"go.mau.fi/whatsmeow/types/events"
@@ -158,12 +160,27 @@ func main() {
 		fmt.Println("PocketBase disabled")
 	}
 	pingCancel()
+	composioCfg, composioClient := calendar.ResolveComposioConfig(settingResolver)
 	go appStore.RunCleanupLoop(ctx, store.DefaultCleanupConfig())
+
+	var mailer composio.Mailer
+	if composioCfg.GmailReady() && composioClient != nil {
+		if es, err := composio.NewEmailService(composioClient, composioCfg); err == nil {
+			mailer = es
+		}
+	}
+	ops.SetWorkerEnv(ops.WorkerEnv{
+		Store:  appStore,
+		Cfg:    cfg,
+		WA:     waClient,
+		AI:     ai.AsAIFace(aiClient),
+		Mailer: mailer,
+	})
 	go (&ops.AsyncWorker{
 		Store:    appStore,
 		Cfg:      cfg,
 		WA:       waClient,
-		Handlers: ops.DefaultJobHandlers(),
+		Handlers: ops.DefaultJobHandlers(ops.WorkerEnv{Store: appStore, Cfg: cfg, WA: waClient, AI: ai.AsAIFace(aiClient), Mailer: mailer}),
 		Interval: 30 * time.Second,
 	}).Run(ctx)
 

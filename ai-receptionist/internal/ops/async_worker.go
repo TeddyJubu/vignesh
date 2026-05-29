@@ -29,6 +29,13 @@ func (w *AsyncWorker) Run(ctx context.Context) {
 	if w.Interval <= 0 {
 		w.Interval = 30 * time.Second
 	}
+	if w.Store != nil {
+		if n, err := w.Store.ResetStaleRunningJobs(15 * time.Minute); err != nil {
+			log.Printf("async_worker: reset stale: %v", err)
+		} else if n > 0 {
+			log.Printf("async_worker: reset %d stale running job(s)", n)
+		}
+	}
 	ticker := time.NewTicker(w.Interval)
 	defer ticker.Stop()
 	for {
@@ -53,14 +60,17 @@ func (w *AsyncWorker) tick(ctx context.Context) {
 }
 
 func (w *AsyncWorker) processOne(ctx context.Context, job store.AsyncJob) {
+	log.Printf("async_worker: start job_id=%s job_type=%s conv_id=%s", job.ID, job.JobType, job.ConvID)
 	h := w.Handlers[strings.ToLower(job.JobType)]
 	if h == nil {
 		_ = w.Store.UpdateAsyncJobStatus(job.ID, "failed", "", "unknown job type")
+		log.Printf("async_worker: fail job_id=%s reason=unknown_job_type", job.ID)
 		return
 	}
 	result, err := h(ctx, job)
 	if err != nil {
 		_ = w.Store.UpdateAsyncJobStatus(job.ID, "failed", result, err.Error())
+		log.Printf("async_worker: fail job_id=%s job_type=%s err=%v", job.ID, job.JobType, err)
 		if job.NotifyOwner && w.WA != nil && w.Cfg != nil {
 			msg := fmt.Sprintf("Job %s (%s) failed: %s", job.JobType, job.ID, err.Error())
 			_ = whatsapp.SendText(ctx, w.WA, whatsapp.PhoneToJID(w.Cfg.OwnerNumber), msg)
@@ -68,6 +78,7 @@ func (w *AsyncWorker) processOne(ctx context.Context, job store.AsyncJob) {
 		return
 	}
 	_ = w.Store.UpdateAsyncJobStatus(job.ID, "completed", result, "")
+	log.Printf("async_worker: done job_id=%s job_type=%s conv_id=%s", job.ID, job.JobType, job.ConvID)
 	if job.NotifyOwner && w.WA != nil && w.Cfg != nil && strings.TrimSpace(result) != "" {
 		summary := result
 		if len(summary) > 500 {
