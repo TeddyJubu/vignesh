@@ -66,6 +66,15 @@ func (r *Runner) RunParallel(ctx context.Context, rc RunContext, tasks []Task) [
 
 func (r *Runner) runOne(ctx context.Context, rc RunContext, t Task) Result {
 	start := time.Now()
+	if err := ctx.Err(); err != nil {
+		return Result{
+			TaskName:  strings.TrimSpace(t.Name),
+			Tool:      strings.TrimSpace(t.Tool),
+			Input:     t.Input,
+			Error:     err.Error(),
+			LatencyMS: time.Since(start).Milliseconds(),
+		}
+	}
 	res := Result{
 		TaskName: strings.TrimSpace(t.Name),
 		Tool:     strings.TrimSpace(t.Tool),
@@ -79,7 +88,7 @@ func (r *Runner) runOne(ctx context.Context, rc RunContext, t Task) Result {
 		r.audit(rc, res)
 		return res
 	}
-	toolCtx, cancel := context.WithTimeout(ctx, r.Timeout)
+	toolCtx, cancel := context.WithTimeout(ctx, r.toolTimeout(ctx))
 	defer cancel()
 	output, err := tool.Run(toolCtx, t.Input)
 	res.LatencyMS = time.Since(start).Milliseconds()
@@ -97,4 +106,17 @@ func (r *Runner) audit(rc RunContext, res Result) {
 		return
 	}
 	_ = rc.Deps.Store.InsertToolRun(rc.ConvID, res.Tool, res.Input, res.Output, res.Error, res.LatencyMS)
+}
+
+func (r *Runner) toolTimeout(ctx context.Context) time.Duration {
+	timeout := r.Timeout
+	if dl, ok := ctx.Deadline(); ok {
+		if rem := time.Until(dl); rem > 0 && rem > timeout {
+			timeout = rem
+		}
+	}
+	if timeout < 100*time.Millisecond {
+		return 100 * time.Millisecond
+	}
+	return timeout
 }

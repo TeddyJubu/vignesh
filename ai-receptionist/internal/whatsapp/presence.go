@@ -27,6 +27,10 @@ func SendTyping(ctx context.Context, wa *Client, chat types.JID, withDelay bool)
 }
 
 func SetTyping(ctx context.Context, wa *Client, chat types.JID, typing bool) {
+	if testSetTyping != nil {
+		testSetTyping(ctx, chat, typing)
+		return
+	}
 	if typing {
 		_ = wa.WM.SendChatPresence(ctx, chat, types.ChatPresenceComposing, "")
 		return

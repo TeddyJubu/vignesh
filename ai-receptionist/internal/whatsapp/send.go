@@ -9,6 +9,9 @@ import (
 )
 
 func SendText(ctx context.Context, wa *Client, chat types.JID, text string) error {
+	if testSendText != nil {
+		return testSendText(ctx, chat, text)
+	}
 	resp, err := wa.WM.SendMessage(ctx, chat, &waE2E.Message{
 		Conversation: proto.String(text),
 	})

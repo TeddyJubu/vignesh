@@ -39,6 +39,8 @@ func resolveProviderStatus(r *settings.Resolver, cfgProvider, cfgModel string) p
 		if r != nil {
 			if m, _ := r.Get("anthropic.model"); strings.TrimSpace(m) != "" {
 				model = strings.TrimSpace(m)
+			} else {
+				model = "claude-sonnet-4-6"
 			}
 		}
 	case "openrouter":

@@ -4,9 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"regexp"
 	"strings"
 	"time"
 )
+
+var emailInText = regexp.MustCompile(`\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b`)
 
 type calendarCheckTool struct{}
 
@@ -86,6 +89,9 @@ func (t bookAppointmentTool) Run(ctx context.Context, input string) (string, err
 		if json.Unmarshal([]byte(out), &m) == nil {
 			if _, ok := m["idempotency_key"]; !ok {
 				m["idempotency_key"] = key
+			}
+			if booked, _ := m["booked"].(bool); booked {
+				maybeSendBookingEmail(ctx, rc, input, m)
 			}
 			if b, err := json.Marshal(m); err == nil {
 				out = string(b)
@@ -196,6 +202,31 @@ func toolCalendarFrom(ctx context.Context) Calendar {
 	}
 	rc := runContextFrom(ctx)
 	return rc.Deps.Calendar
+}
+
+func toolMailerFrom(ctx context.Context) Mailer {
+	rc := runContextFrom(ctx)
+	return rc.Deps.Mailer
+}
+
+func maybeSendBookingEmail(ctx context.Context, rc RunContext, input string, booked map[string]any) {
+	mailer := toolMailerFrom(ctx)
+	if mailer == nil {
+		return
+	}
+	to := emailInText.FindString(input)
+	if to == "" {
+		return
+	}
+	subject := "Your call with Epicware is confirmed"
+	body := fmt.Sprintf("Hi,\n\nYour call slot is confirmed: %s\n\nWe look forward to speaking with you.\n\n— Julia, Epicware", strings.TrimSpace(input))
+	if err := mailer.SendEmail(ctx, to, subject, body); err == nil {
+		booked["email_sent"] = true
+		booked["email_to"] = to
+	} else {
+		booked["email_sent"] = false
+		booked["email_error"] = err.Error()
+	}
 }
 
 // DefaultRegistry registers all receptionist tools.

@@ -21,7 +21,9 @@ import (
 	"ai-receptionist/internal/ops"
 	"ai-receptionist/internal/pb"
 	"ai-receptionist/internal/session"
+	"ai-receptionist/internal/settings"
 	"ai-receptionist/internal/store"
+	"ai-receptionist/internal/tools/composio"
 	"ai-receptionist/internal/webhook"
 	"ai-receptionist/internal/whatsapp"
 
@@ -36,6 +38,8 @@ type Handler struct {
 	store          *store.DB
 	ai             ai.Provider
 	intentAI       ai.Provider
+	plannerAI      ai.Provider
+	collateAI      ai.Provider
 	wa             *whatsapp.Client
 	promptTpl      string
 	styleExtra     string
@@ -44,6 +48,7 @@ type Handler struct {
 	promptBuilder  *PromptBuilder
 	toolReg        *tools.Registry
 	calendar       calendar.Calendar
+	mailer         tools.Mailer
 	graphiti       *memory.Client
 	pb             *pb.Repo
 
@@ -63,26 +68,44 @@ func (h *Handler) InvalidatePromptCache() {
 	}
 }
 
-func New(cfg *config.Config, db *store.DB, aiClient, intentAI ai.Provider, wa *whatsapp.Client, pbRepo *pb.Repo, promptTpl, styleExtra, instructionsMD string) *Handler {
+func New(cfg *config.Config, db *store.DB, aiClient, intentAI, plannerAI, collateAI ai.Provider, wa *whatsapp.Client, pbRepo *pb.Repo, promptTpl, styleExtra, instructionsMD string) *Handler {
 	graphitiURL := strings.TrimSpace(os.Getenv("GRAPHITI_URL"))
 	if intentAI == nil {
 		intentAI = aiClient
 	}
+	if plannerAI == nil {
+		plannerAI = aiClient
+	}
+	if collateAI == nil {
+		collateAI = aiClient
+	}
 	if pbRepo == nil {
 		pbRepo = pb.NewRepo(pb.NewFromEnv())
+	}
+	resolver := settings.New(db)
+	composioCfg, composioClient := calendar.ResolveComposioConfig(resolver)
+	var mailer tools.Mailer
+	if composioCfg.GmailReady() && composioClient != nil {
+		if es, err := composio.NewEmailService(composioClient, composioCfg); err == nil {
+			mailer = es
+			fmt.Println("Email: using Composio Gmail")
+		}
 	}
 	h := &Handler{
 		cfg:            cfg,
 		store:          db,
 		ai:             aiClient,
 		intentAI:       intentAI,
+		plannerAI:      plannerAI,
+		collateAI:      collateAI,
 		wa:             wa,
 		promptTpl:      promptTpl,
 		styleExtra:     styleExtra,
 		instructionsMD: instructionsMD,
 		promptBuilder:  NewPromptBuilder(cfg, db, instructionsMD),
 		toolReg:        tools.DefaultRegistry(),
-		calendar:       calendar.New(),
+		calendar:       calendar.NewFromSettings(resolver),
+		mailer:         mailer,
 		graphiti:       memory.NewClient(graphitiURL),
 		pb:             pbRepo,
 		chatLocks:      newConvCache(),
@@ -245,28 +268,49 @@ func (h *Handler) handleDebounced(ctx context.Context, v *events.Message, in wha
 
 	if err := h.process(ctx, v, in, combinedText); err != nil {
 		fmt.Fprintln(os.Stderr, "receptionist:", in.ConvID, err)
+		if hint := ai.ProviderFailureHint(providerNameFromHandler(h), err); hint != "" {
+			fmt.Fprintln(os.Stderr, "hint:", hint)
+		}
 		ops.AppendErrorLog("receptionist/"+in.ConvID, err)
 		h.sendFailureReply(ctx, v, err)
 	}
 }
 
 func (h *Handler) sendFailureReply(ctx context.Context, v *events.Message, err error) {
-	provider := "AI"
-	if h.ai != nil && h.ai.Name() != "" {
-		provider = strings.ToUpper(h.ai.Name())
-	}
-	msg := "I couldn't reach the AI right now — check the bot terminal (provider auth/network)."
-	if strings.Contains(err.Error(), "403") || strings.Contains(err.Error(), "401") {
-		if strings.Contains(strings.ToLower(provider), "openai") {
-			msg = "OpenAI auth failed — check OPENAI_API_KEY."
-		} else {
-			msg = "Ollama Cloud auth failed — check OLLAMA_API_KEY at ollama.com/settings/keys."
-		}
-	}
-	if strings.Contains(err.Error(), "429") || strings.Contains(strings.ToLower(err.Error()), "limit") {
-		msg = provider + " rate limit — try again shortly."
-	}
+	msg := customerFailureMessage(providerNameFromHandler(h), err)
 	_ = whatsapp.SendText(ctx, h.wa, v.Info.Chat, msg)
+}
+
+func customerFailureMessage(provider string, err error) string {
+	if err == nil {
+		return "Something went wrong on my side — please try again in a moment."
+	}
+	e := strings.ToLower(err.Error())
+	provider = strings.TrimSpace(provider)
+	if provider == "" {
+		provider = "AI"
+	}
+
+	switch {
+	case strings.Contains(e, "parse ai json"), strings.Contains(e, "ai response missing reply"):
+		return "I had trouble formatting my reply — please send that again."
+	case strings.Contains(e, "context deadline exceeded"), strings.Contains(e, "timeout"):
+		return "That took too long to process — please try again in a moment."
+	case strings.Contains(e, "429") || strings.Contains(e, "rate limit"):
+		return strings.ToUpper(provider) + " rate limit — try again shortly."
+	case strings.Contains(e, "401") || strings.Contains(e, "403"):
+		if strings.Contains(strings.ToLower(provider), "openai") {
+			return "OpenAI auth failed — check OPENAI_API_KEY."
+		}
+		if strings.Contains(strings.ToLower(provider), "anthropic") {
+			return "Anthropic auth failed — check the API key in dashboard settings."
+		}
+		return "Ollama Cloud auth failed — check OLLAMA_API_KEY at ollama.com/settings/keys."
+	case strings.Contains(e, "404") && strings.Contains(e, "model"):
+		return "The configured AI model is unavailable — check provider settings in the dashboard."
+	default:
+		return "Something went wrong on my side — please try again in a moment."
+	}
 }
 
 func (h *Handler) chatLock(phone string) *sync.Mutex {
@@ -454,7 +498,7 @@ func (h *Handler) process(ctx context.Context, v *events.Message, in whatsapp.In
 
 	ackCtx, cancelAck := context.WithCancel(overallCtx)
 	defer cancelAck()
-	go h.maybeSendAck(ackCtx, v.Info.Chat, convID)
+	go h.maybeSendAck(ackCtx, v.Info.Chat, convID, text)
 
 	providerName := "unknown"
 	if h.ai != nil {
@@ -469,17 +513,17 @@ func (h *Handler) process(ctx context.Context, v *events.Message, in whatsapp.In
 	}
 
 	if h.cfg.IsPersonal() {
-		reply = FinalizeCustomerReply(strings.TrimSpace(raw), text, h.cfg.BusinessName, h.cfg.BusinessDescription, toolResults)
+		reply = FinalizeCustomerReply(strings.TrimSpace(raw), text, h.cfg.BusinessName, h.cfg.DisplayOwnerName(), h.cfg.BusinessDescription, toolResults)
 	} else {
 		if !structuredOut {
-			reply = FinalizeCustomerReply(strings.TrimSpace(raw), text, h.cfg.BusinessName, h.cfg.BusinessDescription, toolResults)
+			reply = FinalizeCustomerReply(strings.TrimSpace(raw), text, h.cfg.BusinessName, h.cfg.DisplayOwnerName(), h.cfg.BusinessDescription, toolResults)
 			goto SEND_REPLY
 		}
 		parsed, err := h.parseStructuredWithRepair(overallCtx, raw)
 		if err != nil {
 			return err
 		}
-		reply = FinalizeCustomerReply(parsed.Reply, text, h.cfg.BusinessName, h.cfg.BusinessDescription, toolResults)
+		reply = FinalizeCustomerReply(parsed.Reply, text, h.cfg.BusinessName, h.cfg.DisplayOwnerName(), h.cfg.BusinessDescription, toolResults)
 		leadDataOut = lead.Merge(leadData, parsed.LeadUpdates)
 		qualified = lead.IsQualified(leadDataOut)
 		if parsed.Qualified {
@@ -550,42 +594,73 @@ func (h *Handler) completeWithPlanner(ctx context.Context, convID string, msgs [
 	if st, err := h.store.GetAgentState(convID); err == nil && st != nil {
 		var state agent.State
 		if json.Unmarshal([]byte(st.StateJSON), &state) == nil && len(state.Plan.Questions) > 0 {
-			hasPendingPlan = true
-			// Consume the incoming user message as an answer to the next pending question.
-			if state.Answers == nil {
-				state.Answers = map[string]string{}
-			}
-			if state.NextQIndex < 0 {
-				state.NextQIndex = 0
-			}
-			if state.NextQIndex < len(state.Plan.Questions) {
-				// The actual answer text is always the last user message in msgs.
-				if len(msgs) > 0 {
-					last := msgs[len(msgs)-1]
-					if strings.ToLower(last.Role) == "user" {
-						q := state.Plan.Questions[state.NextQIndex]
-						state.Answers[q] = last.Content
-						state.NextQIndex++
+			if isStaleAgentState(state) {
+				_ = h.store.ClearAgentState(convID)
+			} else {
+				hasPendingPlan = true
+				// Consume the incoming user message as an answer to the next pending question.
+				if state.Answers == nil {
+					state.Answers = map[string]string{}
+				}
+				if state.NextQIndex < 0 {
+					state.NextQIndex = 0
+				}
+				if state.NextQIndex < len(state.Plan.Questions) {
+					// The actual answer text is always the last user message in msgs.
+					if len(msgs) > 0 {
+						last := msgs[len(msgs)-1]
+						if strings.ToLower(last.Role) == "user" {
+							q := state.Plan.Questions[state.NextQIndex]
+							state.Answers[q] = last.Content
+							state.NextQIndex++
+						}
 					}
 				}
-			}
-			if state.NextQIndex < len(state.Plan.Questions) {
-				// Ask the next question and persist state.
-				if err := h.store.UpsertAgentState(convID, state); err != nil {
-					return "", false, true, nil, err
+				if state.NextQIndex < len(state.Plan.Questions) {
+					// Ask the next question and persist state.
+					if err := h.store.UpsertAgentState(convID, state); err != nil {
+						return "", false, true, nil, err
+					}
+					return state.Plan.Questions[state.NextQIndex], false, true, nil, nil
 				}
-				return state.Plan.Questions[state.NextQIndex], false, true, nil, nil
+				// Done collecting answers — run tools + collate (keep state until final send succeeds).
+				state.Plan.Questions = nil
+				agent.NormalizePlan(&state.Plan, structured)
+				out, results, err := h.runPlanAndCollate(ctx, convID, &state.Plan, state.Answers, structured, provider)
+				return out, true, false, results, err
 			}
-			// Done collecting answers — run tools + collate (keep state until final send succeeds).
-			out, results, err := h.runPlanAndCollate(ctx, convID, &state.Plan, state.Answers, structured, provider)
-			return out, true, false, results, err
 		}
 	} else if err != nil && err != sql.ErrNoRows {
 		return "", false, false, nil, err
 	}
 
+	// Post-qualification: qualified leads updating booking slots skip generic planner.
+	if !hasPendingPlan {
+		contact, contactErr := h.store.GetContact(convID)
+		if contactErr == nil && contact != nil && contact.Status == "notified" && looksLikeSchedulingUpdate(userText) {
+			plan := &agent.Plan{
+				Goal: "Update appointment slot for qualified lead",
+				Agents: []agent.AgentTask{
+					{Name: "BookSlot", Tool: "book_appointment", Input: userText, ExpectedOutput: "appointment confirmation"},
+				},
+				FinalResponseMode: "structured",
+			}
+			if structured {
+				plan.FinalResponseMode = "structured"
+			} else {
+				plan.FinalResponseMode = "text"
+			}
+			agent.NormalizePlan(plan, structured)
+			out, results, runErr := h.runPlanAndCollate(ctx, convID, plan, nil, structured, provider)
+			if runErr == nil {
+				return out, structured, false, results, nil
+			}
+			// fall through to normal path on error
+		}
+	}
+
 	if !needsPlannerPath(mode, userText, hasPendingPlan) {
-		fastCtx, cancelFast := budgetCtx(ctx, 20*time.Second)
+		fastCtx, cancelFast := budgetCtx(ctx, fastCompleteTimeout())
 		defer cancelFast()
 		fastStart := time.Now()
 		out, err := h.ai.Complete(fastCtx, msgs, structured)
@@ -594,35 +669,36 @@ func (h *Handler) completeWithPlanner(ctx context.Context, convID string, msgs [
 		return out, structured, false, nil, err
 	}
 
-	planCtx, cancel := budgetCtx(ctx, 6*time.Second)
+	planCtx, cancel := budgetCtx(ctx, plannerTimeout())
 	defer cancel()
 	planStart := time.Now()
-	rawPlan, err := h.ai.Complete(planCtx, buildPlannerMessages(msgs, structured, h.toolReg), false)
+	rawPlan, err := h.plannerAI.Complete(planCtx, buildPlannerMessages(msgs, structured, h.toolReg), false)
 	logTurnPhase(convID, provider, "planner", planStart, err)
 	traceTurn(h.store, convID, "planner", planStart, err)
 	if err != nil {
-		fallbackCtx, cancelFB := budgetCtx(ctx, 20*time.Second)
+		fallbackCtx, cancelFB := budgetCtx(ctx, fastCompleteTimeout())
 		defer cancelFB()
 		out, err := h.ai.Complete(fallbackCtx, msgs, structured)
 		return out, true, false, nil, err
 	}
 	plan, err := agent.ParsePlan(rawPlan)
 	if err != nil {
-		repairCtx, cancelRepair := budgetCtx(ctx, 4*time.Second)
-		repaired, errRepair := h.ai.Complete(repairCtx, buildPlannerRepairMessages(rawPlan, structured, h.toolReg), false)
+		repairCtx, cancelRepair := budgetCtx(ctx, plannerRepairTimeout())
+		repaired, errRepair := h.plannerAI.Complete(repairCtx, buildPlannerRepairMessages(rawPlan, structured, h.toolReg), false)
 		cancelRepair()
 		if errRepair == nil {
 			plan, err = agent.ParsePlan(repaired)
 		}
 	}
 	if err != nil {
-		fallbackCtx, cancelFB := budgetCtx(ctx, 20*time.Second)
+		fallbackCtx, cancelFB := budgetCtx(ctx, fastCompleteTimeout())
 		defer cancelFB()
 		out, err := h.ai.Complete(fallbackCtx, msgs, structured)
 		return out, true, false, nil, err
 	}
-	if err := h.toolReg.ValidatePlannerTools(planAgentTools(plan)); err != nil {
-		fallbackCtx, cancelFB := budgetCtx(ctx, 20*time.Second)
+	agent.NormalizePlan(plan, structured)
+	if err := h.toolReg.ValidatePlannerTools(agent.PlanToolNames(plan)); err != nil {
+		fallbackCtx, cancelFB := budgetCtx(ctx, fastCompleteTimeout())
 		defer cancelFB()
 		out, err := h.ai.Complete(fallbackCtx, msgs, structured)
 		return out, true, false, nil, err
@@ -648,25 +724,41 @@ func (h *Handler) runPlanAndCollate(ctx context.Context, convID string, plan *ag
 	rc.Deps.Calendar = h.calendar
 	toolCtx := tools.ContextWithCalendar(ctx, h.calendar)
 
-	agentCtx, cancel := budgetCtx(toolCtx, 10*time.Second)
+	agentCtx, cancel := budgetCtx(toolCtx, toolsTimeout())
 	defer cancel()
 	toolStart := time.Now()
 	results := agent.RunToolsParallel(agentCtx, rc, plan.Agents)
 	logTurnPhase(convID, provider, "tools", toolStart, nil)
 	traceTurn(h.store, convID, "tools", toolStart, nil)
 
-	collateCtx, cancel2 := budgetCtx(ctx, 20*time.Second)
+	collateCtx, cancel2 := budgetCtx(ctx, collateTimeout())
 	defer cancel2()
 	collateStart := time.Now()
 	collateMsgs := buildCollationMessages(plan, answers, results, structured)
-	out, err := h.ai.Complete(collateCtx, collateMsgs, structured)
+	out, err := h.collateAI.Complete(collateCtx, collateMsgs, structured)
 	logTurnPhase(convID, provider, "collate", collateStart, err)
 	traceTurn(h.store, convID, "collate", collateStart, err)
 	return out, results, err
 }
 
-func (h *Handler) maybeSendAck(ctx context.Context, chat types.JID, convID string) {
+func isGreetingOrShort(text string) bool {
+	s := strings.TrimSpace(strings.ToLower(text))
+	if len(s) < 7 {
+		return true
+	}
+	switch s {
+	case "hi", "hello", "hey", "yo", "morning", "afternoon", "evening":
+		return true
+	default:
+		return false
+	}
+}
+
+func (h *Handler) maybeSendAck(ctx context.Context, chat types.JID, convID string, userText string) {
 	defer func() { recover() }()
+	if isGreetingOrShort(userText) {
+		return
+	}
 	select {
 	case <-ctx.Done():
 		return
@@ -678,7 +770,7 @@ func (h *Handler) maybeSendAck(ctx context.Context, chat types.JID, convID strin
 	if !h.shouldSendAck(convID) {
 		return
 	}
-	if err := whatsapp.SendText(ctx, h.wa, chat, "Got it — checking now."); err == nil {
+	if err := whatsapp.SendText(ctx, h.wa, chat, "Just a second, let me check that for you... 🔍"); err == nil {
 		h.markAckSent(convID)
 	}
 }
@@ -767,16 +859,21 @@ func (h *Handler) notifyQualifiedLead(ctx context.Context, convID string, in wha
 }
 
 func planAgentTools(plan *agent.Plan) []string {
-	if plan == nil {
-		return nil
+	return agent.PlanToolNames(plan)
+}
+
+func isStaleAgentState(state agent.State) bool {
+	if state.StartedAtUNIX <= 0 {
+		return false
 	}
-	out := make([]string, 0, len(plan.Agents))
-	for _, a := range plan.Agents {
-		if t := strings.TrimSpace(a.Tool); t != "" {
-			out = append(out, t)
-		}
+	return time.Now().Unix()-state.StartedAtUNIX > int64(agentStateMaxAge.Seconds())
+}
+
+func providerNameFromHandler(h *Handler) string {
+	if h == nil || h.ai == nil {
+		return ""
 	}
-	return out
+	return h.ai.Name()
 }
 
 func (h *Handler) buildSystemPrompt(convID string, leadData map[string]string, in whatsapp.InboundContext, language, mode, userText string, stacked bool) (string, error) {
@@ -832,6 +929,9 @@ func (h *Handler) buildSystemPrompt(convID string, leadData map[string]string, i
 		b.WriteString(")\n")
 	}
 	if h.cfg.LeadTrackingEnabled() {
+		if history, histErr := h.store.RecentMessages(convID, historyLimit); histErr == nil {
+			leadData = backfillLeadFromHistory(history, leadData)
+		}
 		missing := lead.Missing(leadData)
 		leadJSON, _ := json.Marshal(leadData)
 		b.WriteString("\n\n## Runtime context\n")
@@ -841,6 +941,10 @@ func (h *Handler) buildSystemPrompt(convID string, leadData map[string]string, i
 		b.WriteString("\ncurrent_lead_data: ")
 		b.Write(leadJSON)
 		b.WriteString("\n")
+		if len(missing) > 1 {
+			b.WriteString("\n## Crucial Phrasing Constraints\n")
+			b.WriteString("CRITICAL CONSTRAINT: You have multiple missing fields to collect. You are strictly forbidden from saying \"last question\", \"one last question\" or \"last quick one\". Instead, use phrases like \"Just a couple of quick details...\" or \"Next...\". Only refer to a \"final question\" when exactly one required field remains.\n")
+		}
 	}
 	return b.String(), nil
 }

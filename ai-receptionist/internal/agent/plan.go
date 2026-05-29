@@ -6,6 +6,9 @@ import (
 	"strings"
 )
 
+// MaxPlannerAgents is the hard cap on parallel tool tasks per plan.
+const MaxPlannerAgents = 4
+
 type Plan struct {
 	Goal              string      `json:"goal"`
 	Agents            []AgentTask `json:"agents"`
@@ -50,6 +53,49 @@ func ParsePlan(raw string) (*Plan, error) {
 	}
 	p.FinalResponseMode = mode
 	return &p, nil
+}
+
+// NormalizePlan enforces planner constraints after JSON parse.
+func NormalizePlan(p *Plan, structured bool) {
+	if p == nil {
+		return
+	}
+	if structured {
+		p.FinalResponseMode = "structured"
+	}
+	// Planner rule: collect user info first — defer agents until questions are answered,
+	// but keep them on the plan so resume can run tools after Q&A.
+	if len(p.Questions) > 0 {
+		if len(p.Agents) > MaxPlannerAgents {
+			p.Agents = p.Agents[:MaxPlannerAgents]
+		}
+		return
+	}
+	filtered := p.Agents[:0]
+	for _, a := range p.Agents {
+		if strings.TrimSpace(a.Tool) == "" && strings.TrimSpace(a.Name) == "" {
+			continue
+		}
+		filtered = append(filtered, a)
+	}
+	p.Agents = filtered
+	if len(p.Agents) > MaxPlannerAgents {
+		p.Agents = p.Agents[:MaxPlannerAgents]
+	}
+}
+
+// PlanToolNames returns non-empty tool names from a plan.
+func PlanToolNames(p *Plan) []string {
+	if p == nil {
+		return nil
+	}
+	out := make([]string, 0, len(p.Agents))
+	for _, a := range p.Agents {
+		if t := strings.TrimSpace(a.Tool); t != "" {
+			out = append(out, t)
+		}
+	}
+	return out
 }
 
 func stripCodeFences(raw string) string {

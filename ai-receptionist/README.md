@@ -78,8 +78,10 @@ Environment overrides:
 - `GRAPHITI_URL` — Graphiti sidecar base URL for memory ingest/recall and dream drafts (e.g. `http://127.0.0.1:8333`; see `graphiti/README.md`)
 - `MEMORY_RECALL_IN_PROMPT` — set `1` to inject Graphiti recall into the WhatsApp prompt
 - `CONFIG_PATH`, `PROMPT_PATH`, `INSTRUCTIONS_PATH` (default `knowledge/instructions.md`); soul source file `knowledge/SOUL.md` (embedded at build, synced to DB on migrate v7)
-- `AI_PROVIDER` — `ollama` (default) or `openai`
+- `AI_PROVIDER` — `ollama` (default for local dev) or `openai`; production VPS uses dashboard **Settings → Providers** (`ai.provider=anthropic` recommended)
 - `OPENAI_API_KEY`, `OPENAI_BASE_URL` (default `https://sg.api.openai.com`), `OPENAI_MODEL`
+- **Model routing** (`internal/models/GetModel`): `intent_classify` uses a fast model (Haiku on Anthropic, config model on Ollama); `planner` / `collate` use the main dashboard model (Sonnet on Anthropic). Override with `INTENT_CLASSIFY_MODEL`, `PLANNER_MODEL`, `COLLATE_MODEL`.
+- Optional latency budgets (seconds): `PLANNER_TIMEOUT_SEC`, `TOOLS_TIMEOUT_SEC`, `COLLATE_TIMEOUT_SEC`, `FAST_COMPLETE_TIMEOUT_SEC`, `OVERALL_AI_TIMEOUT_SEC`, `ACK_DELAY_SEC`, `AGENT_STATE_MAX_AGE_SEC`
 
 ## Julia eval (pre-deploy)
 
