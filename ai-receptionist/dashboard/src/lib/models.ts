@@ -46,8 +46,24 @@ export type ProviderPing = {
 
 export type ComposioStatus = {
   ok: boolean
+  configured?: boolean
   message?: string
   enabled_tools?: string[]
+  verified?: boolean
+  calendar_ready?: boolean
+  gmail_ready?: boolean
+  needs_reauth?: boolean
+  expired_accounts?: number
+  user_id?: string
+  timezone?: string
+  calendar_account_id?: string
+  gmail_account_id?: string
+  connected_accounts?: Array<{
+    id: string
+    toolkit_slug: string
+    status: string
+    user_id?: string
+  }>
 }
 
 export type RecallResult = {

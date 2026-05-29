@@ -21,7 +21,9 @@ import (
 	"ai-receptionist/internal/ops"
 	"ai-receptionist/internal/pb"
 	"ai-receptionist/internal/session"
+	"ai-receptionist/internal/settings"
 	"ai-receptionist/internal/store"
+	"ai-receptionist/internal/tools/composio"
 	"ai-receptionist/internal/webhook"
 	"ai-receptionist/internal/whatsapp"
 
@@ -46,6 +48,7 @@ type Handler struct {
 	promptBuilder  *PromptBuilder
 	toolReg        *tools.Registry
 	calendar       calendar.Calendar
+	mailer         tools.Mailer
 	graphiti       *memory.Client
 	pb             *pb.Repo
 
@@ -79,6 +82,15 @@ func New(cfg *config.Config, db *store.DB, aiClient, intentAI, plannerAI, collat
 	if pbRepo == nil {
 		pbRepo = pb.NewRepo(pb.NewFromEnv())
 	}
+	resolver := settings.New(db)
+	composioCfg, composioClient := calendar.ResolveComposioConfig(resolver)
+	var mailer tools.Mailer
+	if composioCfg.GmailReady() && composioClient != nil {
+		if es, err := composio.NewEmailService(composioClient, composioCfg); err == nil {
+			mailer = es
+			fmt.Println("Email: using Composio Gmail")
+		}
+	}
 	h := &Handler{
 		cfg:            cfg,
 		store:          db,
@@ -92,7 +104,8 @@ func New(cfg *config.Config, db *store.DB, aiClient, intentAI, plannerAI, collat
 		instructionsMD: instructionsMD,
 		promptBuilder:  NewPromptBuilder(cfg, db, instructionsMD),
 		toolReg:        tools.DefaultRegistry(),
-		calendar:       calendar.New(),
+		calendar:       calendar.NewFromSettings(resolver),
+		mailer:         mailer,
 		graphiti:       memory.NewClient(graphitiURL),
 		pb:             pbRepo,
 		chatLocks:      newConvCache(),
@@ -264,22 +277,40 @@ func (h *Handler) handleDebounced(ctx context.Context, v *events.Message, in wha
 }
 
 func (h *Handler) sendFailureReply(ctx context.Context, v *events.Message, err error) {
-	provider := "AI"
-	if h.ai != nil && h.ai.Name() != "" {
-		provider = strings.ToUpper(h.ai.Name())
-	}
-	msg := "I couldn't reach the AI right now — check the bot terminal (provider auth/network)."
-	if strings.Contains(err.Error(), "403") || strings.Contains(err.Error(), "401") {
-		if strings.Contains(strings.ToLower(provider), "openai") {
-			msg = "OpenAI auth failed — check OPENAI_API_KEY."
-		} else {
-			msg = "Ollama Cloud auth failed — check OLLAMA_API_KEY at ollama.com/settings/keys."
-		}
-	}
-	if strings.Contains(err.Error(), "429") || strings.Contains(strings.ToLower(err.Error()), "limit") {
-		msg = provider + " rate limit — try again shortly."
-	}
+	msg := customerFailureMessage(providerNameFromHandler(h), err)
 	_ = whatsapp.SendText(ctx, h.wa, v.Info.Chat, msg)
+}
+
+func customerFailureMessage(provider string, err error) string {
+	if err == nil {
+		return "Something went wrong on my side — please try again in a moment."
+	}
+	e := strings.ToLower(err.Error())
+	provider = strings.TrimSpace(provider)
+	if provider == "" {
+		provider = "AI"
+	}
+
+	switch {
+	case strings.Contains(e, "parse ai json"), strings.Contains(e, "ai response missing reply"):
+		return "I had trouble formatting my reply — please send that again."
+	case strings.Contains(e, "context deadline exceeded"), strings.Contains(e, "timeout"):
+		return "That took too long to process — please try again in a moment."
+	case strings.Contains(e, "429") || strings.Contains(e, "rate limit"):
+		return strings.ToUpper(provider) + " rate limit — try again shortly."
+	case strings.Contains(e, "401") || strings.Contains(e, "403"):
+		if strings.Contains(strings.ToLower(provider), "openai") {
+			return "OpenAI auth failed — check OPENAI_API_KEY."
+		}
+		if strings.Contains(strings.ToLower(provider), "anthropic") {
+			return "Anthropic auth failed — check the API key in dashboard settings."
+		}
+		return "Ollama Cloud auth failed — check OLLAMA_API_KEY at ollama.com/settings/keys."
+	case strings.Contains(e, "404") && strings.Contains(e, "model"):
+		return "The configured AI model is unavailable — check provider settings in the dashboard."
+	default:
+		return "Something went wrong on my side — please try again in a moment."
+	}
 }
 
 func (h *Handler) chatLock(phone string) *sync.Mutex {
@@ -482,17 +513,17 @@ func (h *Handler) process(ctx context.Context, v *events.Message, in whatsapp.In
 	}
 
 	if h.cfg.IsPersonal() {
-		reply = FinalizeCustomerReply(strings.TrimSpace(raw), text, h.cfg.BusinessName, h.cfg.BusinessDescription, toolResults)
+		reply = FinalizeCustomerReply(strings.TrimSpace(raw), text, h.cfg.BusinessName, h.cfg.DisplayOwnerName(), h.cfg.BusinessDescription, toolResults)
 	} else {
 		if !structuredOut {
-			reply = FinalizeCustomerReply(strings.TrimSpace(raw), text, h.cfg.BusinessName, h.cfg.BusinessDescription, toolResults)
+			reply = FinalizeCustomerReply(strings.TrimSpace(raw), text, h.cfg.BusinessName, h.cfg.DisplayOwnerName(), h.cfg.BusinessDescription, toolResults)
 			goto SEND_REPLY
 		}
 		parsed, err := h.parseStructuredWithRepair(overallCtx, raw)
 		if err != nil {
 			return err
 		}
-		reply = FinalizeCustomerReply(parsed.Reply, text, h.cfg.BusinessName, h.cfg.BusinessDescription, toolResults)
+		reply = FinalizeCustomerReply(parsed.Reply, text, h.cfg.BusinessName, h.cfg.DisplayOwnerName(), h.cfg.BusinessDescription, toolResults)
 		leadDataOut = lead.Merge(leadData, parsed.LeadUpdates)
 		qualified = lead.IsQualified(leadDataOut)
 		if parsed.Qualified {

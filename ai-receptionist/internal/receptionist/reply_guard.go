@@ -24,11 +24,11 @@ var (
 )
 
 // FinalizeCustomerReply applies production safety and persona rules before sending to WhatsApp.
-func FinalizeCustomerReply(reply, userText, businessName, businessDesc string, toolResults []agent.ToolResult) string {
+func FinalizeCustomerReply(reply, userText, businessName, ownerName, businessDesc string, toolResults []agent.ToolResult) string {
 	r := SanitizeReplyWithTools(reply, toolResults)
 	r = stripInternalContent(r)
 	r = stripWhatsAppMarkdown(r)
-	r = enforcePersona(r, userText, businessName, businessDesc)
+	r = enforcePersona(r, userText, businessName, ownerName, businessDesc)
 	r = fixServiceQuestionEcho(r, userText, businessName, businessDesc)
 	r = enforceSingleQuestion(r)
 	r = stripInvalidCalendarSlots(r)
@@ -75,10 +75,26 @@ func stripInternalContent(reply string) string {
 	return r
 }
 
-func enforcePersona(reply, userText, businessName, businessDesc string) string {
+func enforcePersona(reply, userText, businessName, ownerName, businessDesc string) string {
 	r := strings.TrimSpace(reply)
 	lowerUser := strings.ToLower(strings.TrimSpace(userText))
 	lowerReply := strings.ToLower(r)
+	owner := strings.TrimSpace(ownerName)
+	if owner == "" {
+		owner = "Vignesh"
+	}
+
+	if asksCalendarSource(lowerUser) {
+		return "I check " + owner + "'s Google Calendar when booking Epicware calls — that's the schedule I use for availability. Want me to look for a slot?"
+	}
+
+	if asksInfrastructure(lowerUser) {
+		return owner + " set me up and manages the technical side. I can help with enquiries and booking — want me to flag him if you need something technical?"
+	}
+
+	if strings.Contains(lowerReply, "teddy") && strings.Contains(lowerReply, "territory") {
+		return owner + " is the owner and administrator. I can help with enquiries and booking — anything else?"
+	}
 
 	if asksName(lowerUser) || (asksIdentity(lowerUser) && (strings.Contains(lowerReply, "ai assistant") ||
 		strings.Contains(lowerReply, "don't have a personal name") ||
@@ -112,6 +128,21 @@ func asksModel(user string) bool {
 		strings.Contains(user, "are you chatgpt") ||
 		strings.Contains(user, "are you gemini") ||
 		strings.Contains(user, "how were you built")
+}
+
+func asksCalendarSource(user string) bool {
+	return strings.Contains(user, "which calendar") ||
+		strings.Contains(user, "what calendar") ||
+		strings.Contains(user, "whose calendar") ||
+		(strings.Contains(user, "calendar") && strings.Contains(user, "looking at"))
+}
+
+func asksInfrastructure(user string) bool {
+	return strings.Contains(user, "composio") ||
+		strings.Contains(user, "infrastructure") ||
+		strings.Contains(user, "underlying") ||
+		strings.Contains(user, "what api") ||
+		strings.Contains(user, "how do you connect")
 }
 
 func asksIdentity(user string) bool {

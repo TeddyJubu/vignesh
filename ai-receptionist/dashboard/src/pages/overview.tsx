@@ -104,8 +104,14 @@ export function OverviewPage() {
         <Card>
           <CardHeader className="flex flex-row items-start justify-between gap-2">
             <CardTitle className="text-base">Composio</CardTitle>
-            <Badge variant={composio.data?.ok ? 'default' : 'secondary'}>
-              {composio.data?.ok ? 'Connected' : 'Not configured'}
+            <Badge variant={composio.data?.ok ? 'default' : composio.data?.needs_reauth ? 'destructive' : 'secondary'}>
+              {composio.data?.ok
+                ? 'Live'
+                : composio.data?.needs_reauth
+                  ? 'Re-auth needed'
+                  : composio.data?.configured
+                    ? 'Key only'
+                    : 'Not configured'}
             </Badge>
           </CardHeader>
           <CardContent className="space-y-2 text-sm">

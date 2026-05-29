@@ -40,6 +40,7 @@ type Deps struct {
 	Config   Config
 	WhatsApp WhatsApp
 	Calendar Calendar
+	Mailer   Mailer
 }
 
 type Store interface {
@@ -75,6 +76,11 @@ type WhatsApp interface {
 type Calendar interface {
 	CheckAvailability(ctx context.Context, input string) (string, error)
 	BookAppointment(ctx context.Context, convID, input string) (string, error)
+}
+
+// Mailer sends outbound email (e.g. via Composio Gmail).
+type Mailer interface {
+	SendEmail(ctx context.Context, to, subject, body string) error
 }
 
 type Message struct {

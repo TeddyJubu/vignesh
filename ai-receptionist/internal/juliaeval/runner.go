@@ -98,7 +98,7 @@ func (r *Runner) runCase(ctx context.Context, tc Case) (CaseResult, error) {
 			}
 		}
 		reply = receptionist.FinalizeCustomerReply(
-			reply, userText, r.Cfg.BusinessName, r.Cfg.BusinessDescription, nil,
+			reply, userText, r.Cfg.BusinessName, r.Cfg.DisplayOwnerName(), r.Cfg.BusinessDescription, nil,
 		)
 		replies = append(replies, reply)
 		storeHist = append(storeHist, store.Message{Role: "user", Message: userText})

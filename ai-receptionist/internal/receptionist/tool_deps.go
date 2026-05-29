@@ -88,6 +88,7 @@ func (h *Handler) toolRunContext(convID string) tools.RunContext {
 			Config:   configAdapter{cfg: h.cfg},
 			WhatsApp: waAdapter{wa: h.wa, cfg: h.cfg},
 			Calendar: h.calendar,
+			Mailer:   h.mailer,
 		},
 	}
 }

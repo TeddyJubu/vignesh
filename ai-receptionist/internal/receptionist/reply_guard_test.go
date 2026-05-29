@@ -9,7 +9,8 @@ func TestFinalizeCustomerReply_personaAndModel(t *testing.T) {
 	out := FinalizeCustomerReply(
 		"I am a large language model trained by Google.",
 		"What model are you?",
-		"Teddy",
+		"Epicware",
+		"Vignesh",
 		"We build websites.",
 		nil,
 	)
@@ -25,7 +26,8 @@ func TestFinalizeCustomerReply_serviceEcho(t *testing.T) {
 	out := FinalizeCustomerReply(
 		"What services do you offer?",
 		"What services do you offer?",
-		"Teddy",
+		"Epicware",
+		"Vignesh",
 		"We build fast websites for coaches.",
 		nil,
 	)
@@ -41,7 +43,8 @@ func TestFinalizeCustomerReply_stripsQualifiedLead(t *testing.T) {
 	out := FinalizeCustomerReply(
 		"🔥 New qualified lead — Teddy [HOT]\nName: Raj",
 		"thanks",
-		"Teddy",
+		"Epicware",
+		"Vignesh",
 		"websites",
 		nil,
 	)
@@ -54,7 +57,8 @@ func TestFinalizeCustomerReply_singleQuestion(t *testing.T) {
 	out := FinalizeCustomerReply(
 		"What's your name? And your budget? And timeline?",
 		"hi",
-		"Teddy",
+		"Epicware",
+		"Vignesh",
 		"websites",
 		nil,
 	)
@@ -67,7 +71,8 @@ func TestFinalizeCustomerReply_invalidSlots(t *testing.T) {
 	out := FinalizeCustomerReply(
 		"I can do Fri 37am or Fri 55am.",
 		"book",
-		"Teddy",
+		"Epicware",
+		"Vignesh",
 		"websites",
 		nil,
 	)
@@ -80,12 +85,30 @@ func TestFinalizeCustomerReply_validTwoDigitSlots(t *testing.T) {
 	out := FinalizeCustomerReply(
 		"Fri 10am and Fri 11am work, or Fri 12pm if you prefer.",
 		"book",
-		"Teddy",
+		"Epicware",
+		"Vignesh",
 		"websites",
 		nil,
 	)
 	if !strings.Contains(out, "10am") || !strings.Contains(out, "12pm") {
 		t.Fatalf("valid two-digit slots were stripped: %q", out)
+	}
+}
+
+func TestFinalizeCustomerReply_calendarSource(t *testing.T) {
+	out := FinalizeCustomerReply(
+		"I'm not able to share details about the underlying infrastructure — that's Teddy's territory.",
+		"Which calendar are you looking at? Using composio?",
+		"Epicware",
+		"Vignesh",
+		"local SEO",
+		nil,
+	)
+	if strings.Contains(strings.ToLower(out), "teddy") {
+		t.Fatalf("should not mention Teddy: %q", out)
+	}
+	if !strings.Contains(out, "Vignesh") || !strings.Contains(out, "Google Calendar") {
+		t.Fatalf("expected Vignesh calendar answer: %q", out)
 	}
 }
 

@@ -504,7 +504,6 @@ func (s *Server) handleComposioStatus(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusMethodNotAllowed)
 		return
 	}
-	key, _ := s.settings.Resolved("composio.api_key", "COMPOSIO_API_KEY")
 	verify := strings.TrimSpace(r.URL.Query().Get("verify")) == "1"
 
 	allowRaw, _ := s.store.GetAppSetting("composio.allowlist")
@@ -515,38 +514,69 @@ func (s *Server) handleComposioStatus(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	integ, err := composio.BuildIntegrationStatus(r.Context(), s.settings, verify)
+	integrated := integ.CalendarReady || integ.GmailReady
 	out := map[string]any{
-		"ok":            strings.TrimSpace(key) != "",
-		"enabled_tools": enabledTools,
+		"ok":              integrated,
+		"configured":      integ.Configured,
+		"enabled_tools":   enabledTools,
+		"calendar_ready":  integ.CalendarReady,
+		"gmail_ready":     integ.GmailReady,
+		"needs_reauth":    integ.NeedsReauth,
+		"expired_accounts": integ.ExpiredAccounts,
+	}
+	if integ.UserID != "" {
+		out["user_id"] = integ.UserID
+	}
+	if integ.Timezone != "" {
+		out["timezone"] = integ.Timezone
+	}
+	if integ.CalendarAccount != "" {
+		out["calendar_account_id"] = integ.CalendarAccount
+	}
+	if integ.GmailAccount != "" {
+		out["gmail_account_id"] = integ.GmailAccount
+	}
+	if len(integ.ConnectedAccounts) > 0 {
+		out["connected_accounts"] = integ.ConnectedAccounts
 	}
 
-	if strings.TrimSpace(key) == "" {
-		out["message"] = "Composio is not configured. Set composio.api_key."
+	if err != nil {
+		out["ok"] = false
+		out["message"] = err.Error()
 		writeJSON(w, 200, out)
 		return
 	}
 
-	out["message"] = "Composio API key is configured."
+	if !integ.Configured {
+		out["ok"] = false
+		out["message"] = "Composio is not configured. Set composio.api_key."
+		writeJSON(w, 200, out)
+		return
+	}
+	if integ.VerifyError != "" {
+		out["ok"] = false
+		out["message"] = integ.VerifyError
+		writeJSON(w, 200, out)
+		return
+	}
+
+	switch {
+	case integ.CalendarReady && integ.GmailReady:
+		out["message"] = "Google Calendar and Gmail are live via Composio."
+	case integ.CalendarReady:
+		out["message"] = "Google Calendar is live. Connect Gmail in Composio for confirmation emails."
+	case integ.GmailReady:
+		out["message"] = "Gmail is live. Connect Google Calendar in Composio for live booking."
+	case integ.NeedsReauth:
+		out["ok"] = false
+		out["message"] = "Composio auth configs exist but all Google connections are expired or revoked. Reconnect Google Calendar and Gmail in the Composio dashboard (Users → connect accounts)."
+	default:
+		out["ok"] = false
+		out["message"] = "Composio API key is set. Connect Google Calendar and Gmail in the Composio dashboard."
+	}
 	if verify {
-		c := composio.New(key)
-		raw, _ := c.Status(r.Context(), true)
-		verified := false
-		// Consider verification successful only on 2xx.
-		if n, ok := raw["verify_status"].(int); ok {
-			verified = n >= 200 && n < 300
-		} else if f, ok := raw["verify_status"].(float64); ok {
-			code := int(f)
-			verified = code >= 200 && code < 300
-		}
-		if err, ok := raw["verify_error"].(string); ok && strings.TrimSpace(err) != "" {
-			out["message"] = err
-			out["ok"] = false
-		} else if !verified {
-			out["message"] = "Composio verification failed."
-			out["ok"] = false
-		} else {
-			out["ok"] = true
-		}
+		out["verified"] = true
 	}
 
 	writeJSON(w, 200, out)
