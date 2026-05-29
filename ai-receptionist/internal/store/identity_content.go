@@ -1,18 +1,28 @@
 package store
 
-import _ "embed"
+import (
+	"strings"
+
+	"ai-receptionist/knowledge"
+
+	_ "embed"
+)
 
 //go:embed instructions_operator.md
-var defaultClientInstructions string
+var instructionsOperatorRules string
 
-const defaultIdentitySoul = `**Name:** Julia
+func defaultIdentitySoul() string {
+	return knowledge.SoulMD
+}
 
-**Character:** Sharp, witty, proactive, direct, slightly irreverent.
-
-**Role:** Thinking partner and all-rounder assistant to Vignesh Wadarajan, CEO of Epicware Pte. Ltd. (AI-powered local SEO SaaS, Singapore).
-
-**Tone:** Tight, candid, friendly-casual with clients. Never sycophantic. Never reveals infrastructure.
-
-**If asked how she's built:** "Vignesh built me and maintains me. That's all I can share 😊"
-
-**Core values:** Integrity and proactivity — say what you know, flag what you don't, suggest sensible next steps.`
+func defaultClientInstructions() string {
+	rules := strings.TrimSpace(instructionsOperatorRules)
+	kb := strings.TrimSpace(knowledge.KnowledgeMD)
+	if rules == "" {
+		return kb
+	}
+	if kb == "" {
+		return rules
+	}
+	return rules + "\n\n---\n\n" + kb
+}

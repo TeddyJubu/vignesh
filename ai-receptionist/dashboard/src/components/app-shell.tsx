@@ -13,6 +13,7 @@ import {
   Menu,
   Settings,
   Sparkles,
+  Shield,
 } from 'lucide-react'
 
 type NavItem = {
@@ -31,6 +32,7 @@ const nav: Array<{ label: string; items: NavItem[] }> = [
     items: [
       { to: '/settings/providers', label: 'Providers', icon: Settings },
       { to: '/settings/instructions', label: 'Instructions', icon: Activity },
+      { to: '/settings/access', label: 'Access', icon: Shield },
     ],
   },
   {

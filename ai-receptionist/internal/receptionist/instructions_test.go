@@ -38,6 +38,9 @@ func TestBuildAgentInstructions_IncludesSoulAndClient(t *testing.T) {
 	if !strings.Contains(out, "## Client instructions") || !strings.Contains(out, "Universal rules") {
 		t.Fatalf("missing client instructions: %q", out)
 	}
+	if !strings.Contains(out, "EpicReview") {
+		t.Fatalf("missing knowledge base: %q", out)
+	}
 	if !strings.Contains(out, "julia-sales") && !strings.Contains(out, "Mode runbook") {
 		t.Fatalf("missing sales runbook: %q", out)
 	}

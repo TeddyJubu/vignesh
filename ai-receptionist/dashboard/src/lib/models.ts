@@ -16,6 +16,8 @@ export type Instructions = {
   }
   sample_contact?: string
   preview?: string
+  /** bundled (default) or stacked */
+  prompt_layout?: string
 }
 
 export type DreamProposal = {

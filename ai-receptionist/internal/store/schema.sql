@@ -133,3 +133,36 @@ CREATE TABLE IF NOT EXISTS booking_requests (
 );
 
 CREATE INDEX IF NOT EXISTS idx_booking_requests_guest ON booking_requests(guest_phone, status);
+
+-- RBAC + dashboard auth
+CREATE TABLE IF NOT EXISTS access_roles (
+    phone TEXT PRIMARY KEY,
+    role TEXT NOT NULL,
+    permissions_json TEXT NOT NULL DEFAULT '{}',
+    created_at DATETIME NOT NULL DEFAULT (datetime('now')),
+    updated_at DATETIME NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_access_roles_role ON access_roles(role, phone);
+
+CREATE TABLE IF NOT EXISTS dashboard_otp_codes (
+    phone TEXT NOT NULL,
+    code_hash TEXT NOT NULL,
+    expires_at DATETIME NOT NULL,
+    created_at DATETIME NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_dashboard_otp_phone ON dashboard_otp_codes(phone);
+CREATE INDEX IF NOT EXISTS idx_dashboard_otp_expires ON dashboard_otp_codes(expires_at);
+
+CREATE TABLE IF NOT EXISTS dashboard_sessions (
+    token_hash TEXT PRIMARY KEY,
+    phone TEXT NOT NULL,
+    role TEXT NOT NULL,
+    permissions_json TEXT NOT NULL DEFAULT '{}',
+    expires_at DATETIME NOT NULL,
+    created_at DATETIME NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_dashboard_sessions_phone ON dashboard_sessions(phone);
+CREATE INDEX IF NOT EXISTS idx_dashboard_sessions_expires ON dashboard_sessions(expires_at);

@@ -54,13 +54,15 @@ Send a **private text DM** to the linked number (not the owner number in config)
 
 The bot runs as **Julia** with a three-layer prompt stack on every AI turn:
 
-1. **Baseline + soul** — hard-coded rules plus `identity_soul` in SQLite `agent_notes` (seeded on first migrate).
-2. **Client instructions** — `knowledge/instructions.md` (override with `INSTRUCTIONS_PATH`).
+1. **Soul** — `knowledge/SOUL.md` → `identity_soul` (system prompt).
+2. **Knowledge** — operational rules + `knowledge/KNOWLEDGE.md` → `client_instructions` (injected in the **user** turn as `EPICWARE KNOWLEDGE BASE`, with last 5 turns + current message + TASK).
+
+Default layout matches the support-agent spec (see `test-cases-julia-eval.md`). Set `PROMPT_LAYOUT=stacked` for the older all-in-system layout.
 3. **Per-contact facts** — `contact_facts` table (`conv_id`, `fact_key`, `fact_value`).
 
 Optional runbook keys in `agent_notes`: `julia-cs`, `julia-sales`, `julia-booking` (placeholder content; wire into planner modes later).
 
-Edit soul or runbooks in `database.db`:
+Edit soul in git (`knowledge/SOUL.md`), redeploy (schema v7+ refreshes `identity_soul`), or in the Julia dashboard (**Settings → Instructions → Identity**), or in `database.db`:
 
 ```sql
 UPDATE agent_notes SET content = '...' WHERE key = 'identity_soul';
@@ -75,9 +77,22 @@ Environment overrides:
 - `DASHBOARD_BASIC_USER`, `DASHBOARD_BASIC_PASS` — when set, requires HTTP Basic auth for the dashboard + all `/api/*` endpoints
 - `GRAPHITI_URL` — Graphiti sidecar base URL for memory ingest/recall and dream drafts (e.g. `http://127.0.0.1:8333`; see `graphiti/README.md`)
 - `MEMORY_RECALL_IN_PROMPT` — set `1` to inject Graphiti recall into the WhatsApp prompt
-- `CONFIG_PATH`, `PROMPT_PATH`, `INSTRUCTIONS_PATH` (default `knowledge/instructions.md`)
+- `CONFIG_PATH`, `PROMPT_PATH`, `INSTRUCTIONS_PATH` (default `knowledge/instructions.md`); soul source file `knowledge/SOUL.md` (embedded at build, synced to DB on migrate v7)
 - `AI_PROVIDER` — `ollama` (default) or `openai`
 - `OPENAI_API_KEY`, `OPENAI_BASE_URL` (default `https://sg.api.openai.com`), `OPENAI_MODEL`
+
+## Julia eval (pre-deploy)
+
+Before shipping prompt/soul/knowledge changes, run the support eval suite (`test-cases-julia-eval.md`):
+
+```bash
+cd ai-receptionist
+go run ./cmd/juliaeval/
+# or
+./scripts/predeploy-eval.sh
+```
+
+`scripts/deploy.sh` runs this gate unless `SKIP_JULIA_EVAL=1`. Category 3 (escalation) failures block deploy.
 
 ## VPS deployment (systemd)
 

@@ -11,7 +11,8 @@ import (
 const deferReply = "Let me pass this to the team so they can confirm properly."
 
 var (
-	priceGuarantee = regexp.MustCompile(`(?i)(guarantee|guaranteed|fixed price|exact(?:ly)?\s+\$|only\s+\$\d|price is\s+\$|will cost exactly)`)
+	// Block firm sales promises, not factual pricing or refund policy from the knowledge base.
+	priceGuarantee = regexp.MustCompile(`(?i)(?:\bfixed price\b|\bwill cost exactly\b|\bi guarantee you(?:'ll| will)\b|\bwe guarantee you(?:'ll| will)\b|\bguaranteed to rank\b|\bguaranteed (?:#1|number one)\b|\bprice (?:is )?guaranteed\b)`)
 	bookingConfirm = regexp.MustCompile(`(?i)(booked|booking(?:\s+is)?\s+confirmed|appointment (?:is )?confirmed|scheduled for (?:monday|tuesday|wednesday|thursday|friday|saturday|sunday|\d)|see you (?:on|at) \d)`)
 )
 

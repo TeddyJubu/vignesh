@@ -4,6 +4,32 @@ export type ApiError = {
   details?: unknown
 }
 
+const SESSION_TOKEN_KEY = 'ai-receptionist.sessionToken'
+
+export function getSessionToken(): string | null {
+  try {
+    return localStorage.getItem(SESSION_TOKEN_KEY)
+  } catch {
+    return null
+  }
+}
+
+export function setSessionToken(token: string) {
+  try {
+    localStorage.setItem(SESSION_TOKEN_KEY, token)
+  } catch {
+    // ignore
+  }
+}
+
+export function clearSessionToken() {
+  try {
+    localStorage.removeItem(SESSION_TOKEN_KEY)
+  } catch {
+    // ignore
+  }
+}
+
 async function parseJsonSafe(res: Response): Promise<unknown> {
   const contentType = res.headers.get('content-type') ?? ''
   if (!contentType.includes('application/json')) return undefined
@@ -20,6 +46,10 @@ export async function apiFetch<T>(
 ): Promise<T> {
   const headers = new Headers(init.headers)
   if (init.json !== undefined) headers.set('content-type', 'application/json')
+  const token = getSessionToken()
+  if (token && !headers.has('authorization')) {
+    headers.set('authorization', `Bearer ${token}`)
+  }
 
   const base = import.meta.env.BASE_URL.replace(/\/?$/, '/')
   const res = await fetch(`${base}api${path}`, {

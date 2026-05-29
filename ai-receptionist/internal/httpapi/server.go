@@ -19,6 +19,7 @@ import (
 	"ai-receptionist/internal/settings"
 	"ai-receptionist/internal/store"
 	"ai-receptionist/internal/tools/composio"
+	"ai-receptionist/internal/whatsapp"
 
 	"github.com/google/uuid"
 )
@@ -30,6 +31,11 @@ type Server struct {
 	distDir    string
 	graphiti   *memory.Client
 	httpServer *http.Server
+	wa         *whatsapp.Client
+
+	promptTpl      string
+	styleExtra     string
+	instructionsMD string
 
 	invalidatePrompt func()
 
@@ -57,6 +63,10 @@ func New(cfg *config.Config, db *store.DB, distDir, graphitiURL string) *Server 
 	}
 }
 
+func (s *Server) SetWhatsAppClient(c *whatsapp.Client) {
+	s.wa = c
+}
+
 func (s *Server) Start(ctx context.Context, addr string) error {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/settings", s.handleSettings)
@@ -69,6 +79,12 @@ func (s *Server) Start(ctx context.Context, addr string) error {
 	mux.HandleFunc("/api/providers/status", s.handleProviderStatus)
 	mux.HandleFunc("/api/providers/ping", s.handleProviderPing)
 	mux.HandleFunc("/api/composio/status", s.handleComposioStatus)
+	mux.HandleFunc("/api/auth/request-otp", s.handleAuthRequestOTP)
+	mux.HandleFunc("/api/auth/verify-otp", s.handleAuthVerifyOTP)
+	mux.HandleFunc("/api/auth/logout", s.handleAuthLogout)
+	mux.HandleFunc("/api/me", s.handleMe)
+	mux.HandleFunc("/api/access/roles", s.handleAccessRoles)
+	mux.HandleFunc("/api/access/allowlist", s.handleAccessAllowlist)
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 200, map[string]any{"ok": true})
 	})
@@ -117,9 +133,6 @@ func (s *Server) withAuth(next http.Handler) http.Handler {
 	pass := strings.TrimSpace(os.Getenv("DASHBOARD_BASIC_PASS"))
 
 	enabled := token != "" || user != "" || pass != ""
-	if !enabled {
-		return next
-	}
 
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Keep health endpoint unauthenticated for basic liveness checks.
@@ -128,16 +141,70 @@ func (s *Server) withAuth(next http.Handler) http.Handler {
 			return
 		}
 
+		// If no env auth is configured, preserve legacy behavior:
+		// treat the dashboard as open/admin.
+		if !enabled {
+			actor := Actor{
+				Phone:       "",
+				Role:        "admin",
+				Permissions: map[string]bool{},
+				Source:      "open",
+			}
+			r = r.WithContext(ContextWithActor(r.Context(), actor))
+			next.ServeHTTP(w, r)
+			return
+		}
+
+		// Allow OTP login endpoints without prior auth.
+		if r.URL != nil {
+			switch r.URL.Path {
+			case "/api/auth/request-otp", "/api/auth/verify-otp":
+				next.ServeHTTP(w, r)
+				return
+			}
+		}
+
 		// Option A: Bearer token or X-Admin-Token.
 		if token != "" {
 			auth := strings.TrimSpace(r.Header.Get("Authorization"))
 			if strings.HasPrefix(strings.ToLower(auth), "bearer ") {
-				if strings.TrimSpace(auth[len("bearer "):]) == token {
+				raw := strings.TrimSpace(auth[len("bearer "):])
+				if raw == token {
+					actor := Actor{
+						Phone:       "",
+						Role:        "admin",
+						Permissions: map[string]bool{},
+						Source:      "env_token",
+					}
+					r = r.WithContext(ContextWithActor(r.Context(), actor))
+					next.ServeHTTP(w, r)
+					return
+				}
+				// Otherwise treat as a session token.
+				if sess, err := s.store.GetDashboardSessionByToken(raw); err == nil && sess != nil {
+					actor := Actor{
+						Phone:       sess.Phone,
+						Role:        sess.Role,
+						Permissions: sess.Permissions,
+						Source:      "session",
+					}
+					r = r.WithContext(ContextWithActor(r.Context(), actor))
+					if !s.authorizeRequest(r) {
+						writeJSON(w, http.StatusForbidden, map[string]any{"error": "forbidden"})
+						return
+					}
 					next.ServeHTTP(w, r)
 					return
 				}
 			}
 			if strings.TrimSpace(r.Header.Get("X-Admin-Token")) == token {
+				actor := Actor{
+					Phone:       "",
+					Role:        "admin",
+					Permissions: map[string]bool{},
+					Source:      "env_token",
+				}
+				r = r.WithContext(ContextWithActor(r.Context(), actor))
 				next.ServeHTTP(w, r)
 				return
 			}
@@ -147,6 +214,33 @@ func (s *Server) withAuth(next http.Handler) http.Handler {
 		if user != "" || pass != "" {
 			u, p, ok := r.BasicAuth()
 			if ok && subtleConstantTimeEquals(u, user) && subtleConstantTimeEquals(p, pass) {
+				actor := Actor{
+					Phone:       "",
+					Role:        "admin",
+					Permissions: map[string]bool{},
+					Source:      "basic",
+				}
+				r = r.WithContext(ContextWithActor(r.Context(), actor))
+				next.ServeHTTP(w, r)
+				return
+			}
+		}
+
+		// Fallback: allow session tokens even if env token isn't set.
+		if auth := strings.TrimSpace(r.Header.Get("Authorization")); strings.HasPrefix(strings.ToLower(auth), "bearer ") {
+			raw := strings.TrimSpace(auth[len("bearer "):])
+			if sess, err := s.store.GetDashboardSessionByToken(raw); err == nil && sess != nil {
+				actor := Actor{
+					Phone:       sess.Phone,
+					Role:        sess.Role,
+					Permissions: sess.Permissions,
+					Source:      "session",
+				}
+				r = r.WithContext(ContextWithActor(r.Context(), actor))
+				if !s.authorizeRequest(r) {
+					writeJSON(w, http.StatusForbidden, map[string]any{"error": "forbidden"})
+					return
+				}
 				next.ServeHTTP(w, r)
 				return
 			}
@@ -155,6 +249,49 @@ func (s *Server) withAuth(next http.Handler) http.Handler {
 		w.Header().Set("WWW-Authenticate", `Basic realm="ai-receptionist dashboard"`)
 		writeJSON(w, http.StatusUnauthorized, map[string]any{"error": "unauthorized"})
 	})
+}
+
+func (s *Server) authorizeRequest(r *http.Request) bool {
+	a, ok := ActorFromContext(r.Context())
+	if !ok {
+		return false
+	}
+	if a.Role == "admin" {
+		return true
+	}
+	if a.Role != "manager" {
+		return false
+	}
+	perm := requiredPermission(r)
+	if perm == "" {
+		return true
+	}
+	return a.Permissions != nil && a.Permissions[perm]
+}
+
+func requiredPermission(r *http.Request) string {
+	if r == nil || r.URL == nil {
+		return ""
+	}
+	p := r.URL.Path
+	switch {
+	case p == "/api/me":
+		return ""
+	case p == "/api/settings":
+		return "settings"
+	case p == "/api/instructions":
+		return "instructions"
+	case p == "/api/dreams" || strings.HasPrefix(p, "/api/dreams/"):
+		return "dreams"
+	case strings.HasPrefix(p, "/api/providers/"):
+		return "providers"
+	case strings.HasPrefix(p, "/api/memory/"):
+		return "memory"
+	case strings.HasPrefix(p, "/api/access/"):
+		return "access"
+	default:
+		return ""
+	}
 }
 
 func subtleConstantTimeEquals(a, b string) bool {
@@ -218,38 +355,6 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 				writeJSON(w, 500, map[string]any{"error": err.Error()})
 				return
 			}
-		}
-		writeJSON(w, 200, map[string]any{"ok": true})
-	default:
-		w.WriteHeader(http.StatusMethodNotAllowed)
-	}
-}
-
-func (s *Server) handleInstructions(w http.ResponseWriter, r *http.Request) {
-	switch r.Method {
-	case http.MethodGet:
-		notes, err := s.store.ListAgentNotes()
-		if err != nil {
-			writeJSON(w, 500, map[string]any{"error": err.Error()})
-			return
-		}
-		writeJSON(w, 200, map[string]any{"notes": notes})
-	case http.MethodPut:
-		var body struct {
-			Notes map[string]string `json:"notes"`
-		}
-		if err := readJSON(r, &body); err != nil {
-			writeJSON(w, 400, map[string]any{"error": err.Error()})
-			return
-		}
-		for k, v := range body.Notes {
-			if err := s.store.UpsertAgentNote(k, v); err != nil {
-				writeJSON(w, 500, map[string]any{"error": err.Error()})
-				return
-			}
-		}
-		if s.invalidatePrompt != nil {
-			s.invalidatePrompt()
 		}
 		writeJSON(w, 200, map[string]any{"ok": true})
 	default:

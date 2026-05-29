@@ -27,6 +27,7 @@ var (
 func FinalizeCustomerReply(reply, userText, businessName, businessDesc string, toolResults []agent.ToolResult) string {
 	r := SanitizeReplyWithTools(reply, toolResults)
 	r = stripInternalContent(r)
+	r = stripWhatsAppMarkdown(r)
 	r = enforcePersona(r, userText, businessName, businessDesc)
 	r = fixServiceQuestionEcho(r, userText, businessName, businessDesc)
 	r = enforceSingleQuestion(r)
@@ -36,6 +37,13 @@ func FinalizeCustomerReply(reply, userText, businessName, businessDesc string, t
 		return deferReply
 	}
 	return r
+}
+
+func stripWhatsAppMarkdown(reply string) string {
+	r := strings.TrimSpace(reply)
+	r = strings.ReplaceAll(r, "**", "")
+	r = strings.ReplaceAll(r, "__", "")
+	return strings.TrimSpace(r)
 }
 
 func stripInternalContent(reply string) string {

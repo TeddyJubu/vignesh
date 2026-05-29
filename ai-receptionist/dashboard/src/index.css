@@ -142,3 +142,14 @@
     @apply font-sans;
   }
 }
+
+@layer components {
+  /* Base UI sets data-active on the tab button; Tailwind v3 needs data-[active], this is a fallback. */
+  [data-slot="tabs-list"][data-variant="default"] [data-slot="tabs-trigger"][data-active],
+  [data-slot="tabs-list"][data-variant="default"] [data-slot="tabs-trigger"][aria-selected="true"] {
+    background-color: var(--foreground);
+    color: var(--background);
+    box-shadow: 0 1px 2px rgb(0 0 0 / 0.08);
+    font-weight: 500;
+  }
+}

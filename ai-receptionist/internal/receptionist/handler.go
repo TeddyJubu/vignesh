@@ -49,6 +49,11 @@ type Handler struct {
 
 	chatLocks *convCache
 	ackMu     sync.Mutex
+
+	allowMu       sync.Mutex
+	allowCachedAt time.Time
+	allowAll      bool
+	allowList     []string
 }
 
 // InvalidatePromptCache clears cached prompt fragments after dashboard instruction edits.
@@ -94,6 +99,13 @@ func (h *Handler) HandleMessage(ctx context.Context, v *events.Message) {
 		ownJID = *own
 	}
 	replyGroups := h.cfg.ReplyToGroups && h.cfg.GroupCSAllowed()
+
+	allowAll, allowList := h.resolveInboundAllowlist()
+	allowed := []string{}
+	if !allowAll {
+		allowed = allowList
+	}
+
 	in, ok := whatsapp.ShouldProcessInbound(v, whatsapp.InboundFilter{
 		OwnerPhone:          h.cfg.OwnerNumber,
 		ReplyToGroups:       replyGroups,
@@ -101,7 +113,7 @@ func (h *Handler) HandleMessage(ctx context.Context, v *events.Message) {
 		OwnJID:              ownJID,
 		Sent:                h.wa.Sent,
 		Normalize:           config.NormalizePhone,
-		AllowedNumbers:      h.cfg.AllowedNumbers,
+		AllowedNumbers:      allowed,
 		BlockedNumbers:      h.cfg.BlockedNumbers,
 		SupportGroupJIDs:    h.cfg.SupportGroupJIDs,
 		GroupReplyPolicy:    h.cfg.ResolvedGroupReplyPolicy(),
@@ -140,6 +152,42 @@ func (h *Handler) HandleMessage(ctx context.Context, v *events.Message) {
 	}
 
 	h.debouncer.Enqueue(ctx, v, in)
+}
+
+func (h *Handler) resolveInboundAllowlist() (allowAll bool, allowList []string) {
+	ttl := 15 * time.Second
+	now := time.Now()
+
+	h.allowMu.Lock()
+	if !h.allowCachedAt.IsZero() && now.Sub(h.allowCachedAt) < ttl {
+		allowAll = h.allowAll
+		allowList = append([]string{}, h.allowList...)
+		h.allowMu.Unlock()
+		return allowAll, allowList
+	}
+	h.allowMu.Unlock()
+
+	// Defaults.
+	allowAll = true
+	allowList = nil
+
+	rawAll, _ := h.store.GetAppSetting("access.allow_all")
+	if strings.TrimSpace(rawAll) == "0" {
+		allowAll = false
+	}
+	rawList, _ := h.store.GetAppSetting("access.allow_list")
+	var list []string
+	_ = json.Unmarshal([]byte(rawList), &list)
+	if list != nil {
+		allowList = list
+	}
+
+	h.allowMu.Lock()
+	h.allowCachedAt = now
+	h.allowAll = allowAll
+	h.allowList = append([]string{}, allowList...)
+	h.allowMu.Unlock()
+	return allowAll, allowList
 }
 
 func (h *Handler) handlePause(ctx context.Context, v *events.Message, in whatsapp.InboundContext) {
@@ -189,6 +237,11 @@ func (h *Handler) handleDebounced(ctx context.Context, v *events.Message, in wha
 	lock := h.chatLock(in.ConvID)
 	lock.Lock()
 	defer lock.Unlock()
+
+	// Client auto-add: any processed private DM sender becomes a client unless already admin/manager.
+	if !in.IsGroup && !strings.HasPrefix(in.ConvID, "self:") && strings.TrimSpace(in.Sender) != "" {
+		_ = h.store.EnsureClientRole(in.Sender)
+	}
 
 	if err := h.process(ctx, v, in, combinedText); err != nil {
 		fmt.Fprintln(os.Stderr, "receptionist:", in.ConvID, err)
@@ -359,22 +412,33 @@ func (h *Handler) process(ctx context.Context, v *events.Message, in whatsapp.In
 		_ = h.store.SetContactMode(convID, mode)
 		contact.Mode = mode
 	}
-	system, err := h.buildSystemPrompt(convID, leadData, in, contact.Language, mode, text)
-	if err != nil {
-		return err
-	}
-
-	var histMsgs []ai.ChatMessage
-	for _, m := range history {
-		if m.Role == "user" || m.Role == "assistant" {
-			histMsgs = append(histMsgs, ai.ChatMessage{Role: m.Role, Content: m.Message})
+	var msgs []ai.ChatMessage
+	if UseStackedPromptLayout() {
+		system, err := h.buildSystemPrompt(convID, leadData, in, contact.Language, mode, text, true)
+		if err != nil {
+			return err
 		}
+		var histMsgs []ai.ChatMessage
+		for _, m := range history {
+			if m.Role == "user" || m.Role == "assistant" {
+				histMsgs = append(histMsgs, ai.ChatMessage{Role: m.Role, Content: m.Message})
+			}
+		}
+		if len(histMsgs) > 0 && histMsgs[len(histMsgs)-1].Role == "user" && histMsgs[len(histMsgs)-1].Content == text {
+			histMsgs = histMsgs[:len(histMsgs)-1]
+		}
+		msgs = ai.BuildMessages(system, histMsgs, text)
+	} else {
+		system, err := h.buildSystemPrompt(convID, leadData, in, contact.Language, mode, text, false)
+		if err != nil {
+			return err
+		}
+		kb, err := h.promptBuilder.KnowledgeBase()
+		if err != nil {
+			return err
+		}
+		msgs = BuildBundledSupportMessages(system, kb, history, text)
 	}
-	if len(histMsgs) > 0 && histMsgs[len(histMsgs)-1].Role == "user" && histMsgs[len(histMsgs)-1].Content == text {
-		histMsgs = histMsgs[:len(histMsgs)-1]
-	}
-
-	msgs := ai.BuildMessages(system, histMsgs, text)
 
 	var reply string
 	qualified := false
@@ -715,8 +779,14 @@ func planAgentTools(plan *agent.Plan) []string {
 	return out
 }
 
-func (h *Handler) buildSystemPrompt(convID string, leadData map[string]string, in whatsapp.InboundContext, language, mode, userText string) (string, error) {
-	stack, err := h.promptBuilder.Build(convID, mode)
+func (h *Handler) buildSystemPrompt(convID string, leadData map[string]string, in whatsapp.InboundContext, language, mode, userText string, stacked bool) (string, error) {
+	var stack string
+	var err error
+	if stacked {
+		stack, err = h.promptBuilder.Build(convID, mode)
+	} else {
+		stack, err = h.promptBuilder.BuildSupportStack(convID, mode)
+	}
 	if err != nil {
 		return "", err
 	}
