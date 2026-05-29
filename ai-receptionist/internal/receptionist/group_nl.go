@@ -189,9 +189,23 @@ func extractQuotedOrNamed(text, after string) string {
 			return rest[1 : end+1]
 		}
 	}
-	parts := strings.Fields(rest)
-	if len(parts) > 0 {
-		return parts[0]
+	if rest != "" {
+		return trimNameAtSeparator(rest)
 	}
 	return ""
+}
+
+func trimNameAtSeparator(rest string) string {
+	rest = strings.TrimSpace(rest)
+	lower := strings.ToLower(rest)
+	for _, sep := range []string{" and add ", " and invite ", " with ", " and ", ","} {
+		if idx := strings.Index(lower, sep); idx > 0 {
+			return strings.TrimSpace(rest[:idx])
+		}
+	}
+	// strip trailing phone if present
+	if idx := strings.Index(lower, "+"); idx > 0 {
+		return strings.TrimSpace(rest[:idx])
+	}
+	return rest
 }

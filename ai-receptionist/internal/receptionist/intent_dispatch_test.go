@@ -30,10 +30,30 @@ func TestParseGroupNLCreate(t *testing.T) {
 	if !ok || a.Kind != "create" {
 		t.Fatalf("parse failed: %+v ok=%v", a, ok)
 	}
-	if a.Name == "" {
-		t.Fatal("expected name")
+	if a.Name != "Epicware VIP" {
+		t.Fatalf("name=%q", a.Name)
 	}
 	if len(a.Phones) != 1 {
 		t.Fatalf("phones=%v", a.Phones)
+	}
+}
+
+func TestParseGroupNLCreateUnquoted(t *testing.T) {
+	a, ok := parseGroupNL(`Create a WhatsApp group Epicware VIP and add +6591234567`)
+	if !ok || a.Kind != "create" {
+		t.Fatalf("parse failed: %+v ok=%v", a, ok)
+	}
+	if a.Name != "Epicware VIP" {
+		t.Fatalf("name=%q want Epicware VIP", a.Name)
+	}
+}
+
+func TestParseGuestSlotChoice(t *testing.T) {
+	slots := []string{"Mon 3pm SGT", "Tue 10am SGT", "Wed 2pm SGT"}
+	if chosen, ok := parseGuestSlotChoice("2", "2", slots); !ok || chosen != slots[1] {
+		t.Fatalf("pick 2: chosen=%q ok=%v", chosen, ok)
+	}
+	if _, ok := parseGuestSlotChoice("who is this?", "who is this?", slots); ok {
+		t.Fatal("expected no match for unrelated reply")
 	}
 }
