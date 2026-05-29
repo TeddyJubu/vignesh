@@ -134,6 +134,23 @@ CREATE TABLE IF NOT EXISTS booking_requests (
 
 CREATE INDEX IF NOT EXISTS idx_booking_requests_guest ON booking_requests(guest_phone, status);
 
+CREATE TABLE IF NOT EXISTS lead_contacts (
+    id TEXT PRIMARY KEY,
+    job_id TEXT NOT NULL DEFAULT '',
+    name TEXT NOT NULL DEFAULT '',
+    company TEXT NOT NULL DEFAULT '',
+    email TEXT NOT NULL DEFAULT '',
+    phone TEXT NOT NULL DEFAULT '',
+    fit_score INTEGER NOT NULL DEFAULT 0,
+    pitch_angle TEXT NOT NULL DEFAULT '',
+    url TEXT NOT NULL DEFAULT '',
+    linkedin TEXT NOT NULL DEFAULT '',
+    icp_match TEXT NOT NULL DEFAULT '',
+    created_at DATETIME NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_lead_contacts_job ON lead_contacts(job_id);
+
 -- RBAC + dashboard auth
 CREATE TABLE IF NOT EXISTS access_roles (
     phone TEXT PRIMARY KEY,

@@ -6,7 +6,7 @@ import (
 	"strings"
 )
 
-const schemaVersionCurrent = 11
+const schemaVersionCurrent = 12
 
 var contactMigrations = []string{
 	`ALTER TABLE contacts ADD COLUMN paused_until TEXT`,
@@ -89,6 +89,21 @@ var infraMigrations = []string{
 		updated_at DATETIME NOT NULL DEFAULT (datetime('now'))
 	)`,
 	`CREATE INDEX IF NOT EXISTS idx_booking_requests_guest ON booking_requests(guest_phone, status)`,
+	`CREATE TABLE IF NOT EXISTS lead_contacts (
+		id TEXT PRIMARY KEY,
+		job_id TEXT NOT NULL DEFAULT '',
+		name TEXT NOT NULL DEFAULT '',
+		company TEXT NOT NULL DEFAULT '',
+		email TEXT NOT NULL DEFAULT '',
+		phone TEXT NOT NULL DEFAULT '',
+		fit_score INTEGER NOT NULL DEFAULT 0,
+		pitch_angle TEXT NOT NULL DEFAULT '',
+		url TEXT NOT NULL DEFAULT '',
+		linkedin TEXT NOT NULL DEFAULT '',
+		icp_match TEXT NOT NULL DEFAULT '',
+		created_at DATETIME NOT NULL DEFAULT (datetime('now'))
+	)`,
+	`CREATE INDEX IF NOT EXISTS idx_lead_contacts_job ON lead_contacts(job_id)`,
 	`CREATE INDEX IF NOT EXISTS idx_messages_phone_role_created ON messages(phone, role, created_at)`,
 	`CREATE INDEX IF NOT EXISTS idx_contacts_collecting_nudge ON contacts(status, nudge_sent_at, paused_until)`,
 	`CREATE TABLE IF NOT EXISTS access_roles (
@@ -204,6 +219,9 @@ func migrate(db *sql.DB) error {
 		if err := refreshClientInstructions(db); err != nil {
 			return err
 		}
+	}
+	if schemaBefore < 12 {
+		// lead_contacts table added in infraMigrations; version bump only.
 	}
 	if schemaBefore < schemaVersionCurrent {
 		if _, err := db.Exec(

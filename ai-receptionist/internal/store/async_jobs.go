@@ -2,6 +2,7 @@ package store
 
 import (
 	"database/sql"
+	"fmt"
 	"time"
 
 	"github.com/google/uuid"
@@ -90,6 +91,51 @@ func (d *DB) UpdateAsyncJobStatus(id, status, result, errMsg string) error {
 		status, result, errMsg, id,
 	)
 	return err
+}
+
+// GetAsyncJob returns a job by id (nil if missing).
+func (d *DB) GetAsyncJob(id string) (*AsyncJob, error) {
+	row := d.db.QueryRow(
+		`SELECT id, conv_id, job_type, status, payload, result, error, notify_owner, created_at, updated_at
+		 FROM async_jobs WHERE id = ?`, id,
+	)
+	var j AsyncJob
+	var errMsg sql.NullString
+	var created, updated string
+	if err := row.Scan(&j.ID, &j.ConvID, &j.JobType, &j.Status, &j.Payload, &j.Result, &errMsg, &j.NotifyOwner, &created, &updated); err != nil {
+		if err == sql.ErrNoRows {
+			return nil, nil
+		}
+		return nil, err
+	}
+	if errMsg.Valid {
+		j.Error = errMsg.String
+	}
+	if t, err := parseSQLiteTime(created); err == nil {
+		j.CreatedAt = t
+	}
+	if t, err := parseSQLiteTime(updated); err == nil {
+		j.UpdatedAt = t
+	}
+	return &j, nil
+}
+
+// ResetStaleRunningJobs requeues jobs stuck in running (e.g. after process crash).
+func (d *DB) ResetStaleRunningJobs(maxAge time.Duration) (int, error) {
+	if maxAge <= 0 {
+		maxAge = 15 * time.Minute
+	}
+	cutoff := time.Now().Add(-maxAge).UTC().Format("2006-01-02 15:04:05")
+	res, err := d.db.Exec(
+		`UPDATE async_jobs SET status = 'pending', updated_at = datetime('now')
+		 WHERE status = 'running' AND updated_at < ?`,
+		cutoff,
+	)
+	if err != nil {
+		return 0, fmt.Errorf("reset stale running jobs: %w", err)
+	}
+	n, _ := res.RowsAffected()
+	return int(n), nil
 }
 
 func scanAsyncJobs(rows *sql.Rows) ([]AsyncJob, error) {

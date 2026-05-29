@@ -151,6 +151,10 @@ func (h *Handler) HandleMessage(ctx context.Context, v *events.Message) {
 	}
 	fmt.Printf("inbound conv=%s chat=%s text=%q\n", in.ConvID, v.Info.Chat, in.Text)
 
+	if h.TryHandleGuestBookingReply(ctx, v, in) {
+		return
+	}
+
 	if IsResetKeyword(in.Text) {
 		if canPauseSender(in, h.cfg.OwnerNumber) {
 			h.handleReset(ctx, v, in)
@@ -161,6 +165,12 @@ func (h *Handler) HandleMessage(ctx context.Context, v *events.Message) {
 	}
 	if IsGroupAdminKeyword(in.Text) && canPauseSender(in, h.cfg.OwnerNumber) {
 		h.handleGroupAdmin(ctx, v, in)
+		return
+	}
+	if IsGroupManageNL(in.Text) && canPauseSender(in, h.cfg.OwnerNumber) {
+		if _, msg := h.handleGroupManageNL(ctx, v, in, in.Text); msg != "" {
+			_ = whatsapp.SendText(ctx, h.wa, v.Info.Chat, msg)
+		}
 		return
 	}
 	if IsBookingCoordinationKeyword(in.Text) && canPauseSender(in, h.cfg.OwnerNumber) {
@@ -318,8 +328,9 @@ func (h *Handler) chatLock(phone string) *sync.Mutex {
 	return v.(*sync.Mutex)
 }
 
-func (h *Handler) runIntentPipeline(ctx context.Context, v *events.Message, convID, text string) (early bool, err error) {
+func (h *Handler) runIntentPipeline(ctx context.Context, v *events.Message, in whatsapp.InboundContext, text string) (early bool, err error) {
 	echoMode := os.Getenv("ECHO_INTENT") == "1"
+	convID := in.ConvID
 
 	turns, turnErr := session.GetLastTurns(ctx, h.store, convID, historyLimit)
 	if turnErr == nil && len(turns) > 0 {
@@ -362,6 +373,19 @@ func (h *Handler) runIntentPipeline(ctx context.Context, v *events.Message, conv
 
 	if echoMode {
 		return true, h.sendEchoReply(ctx, v, convID, result)
+	}
+
+	if handled, ack := h.DispatchDay3Intent(ctx, v, convID, in, result, text); handled {
+		if ack != "" {
+			if err := h.store.InsertMessage(convID, "assistant", ack); err != nil {
+				return true, err
+			}
+			if err := whatsapp.SendText(ctx, h.wa, v.Info.Chat, ack); err != nil {
+				return true, err
+			}
+			_ = h.store.TouchLastBotReply(convID)
+		}
+		return true, nil
 	}
 	return false, nil
 }
@@ -439,7 +463,7 @@ func (h *Handler) process(ctx context.Context, v *events.Message, in whatsapp.In
 		return err
 	}
 
-	if early, err := h.runIntentPipeline(ctx, v, convID, text); err != nil {
+	if early, err := h.runIntentPipeline(ctx, v, in, text); err != nil {
 		return err
 	} else if early {
 		return nil

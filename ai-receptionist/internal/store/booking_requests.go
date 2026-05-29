@@ -65,3 +65,28 @@ func (d *DB) UpdateBookingRequestStatus(id, status, proposedSlot, eventID string
 	)
 	return err
 }
+
+// GetActiveBookingByGuest returns the newest open booking for a guest phone.
+func (d *DB) GetActiveBookingByGuest(guestPhone string) (*BookingRequest, error) {
+	row := d.db.QueryRow(
+		`SELECT id, owner_conv, guest_phone, guest_name, status, guest_slots_json, proposed_slot, event_id, created_at, updated_at
+		 FROM booking_requests
+		 WHERE guest_phone = ? AND status IN ('awaiting_guest', 'awaiting_guest_choice', 'pending')
+		 ORDER BY created_at DESC LIMIT 1`, guestPhone,
+	)
+	var r BookingRequest
+	var created, updated string
+	if err := row.Scan(&r.ID, &r.OwnerConv, &r.GuestPhone, &r.GuestName, &r.Status, &r.GuestSlotsJSON, &r.ProposedSlot, &r.EventID, &created, &updated); err != nil {
+		if err == sql.ErrNoRows {
+			return nil, nil
+		}
+		return nil, err
+	}
+	if t, err := parseSQLiteTime(created); err == nil {
+		r.CreatedAt = t
+	}
+	if t, err := parseSQLiteTime(updated); err == nil {
+		r.UpdatedAt = t
+	}
+	return &r, nil
+}

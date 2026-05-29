@@ -13,11 +13,11 @@
   "group_mention_aliases": ["julia"],
   "capabilities": {
     "group_support": false,
-    "group_admin": false,
+    "group_admin": true,
     "calendar": true,
     "outbound_booking": true,
     "marketing_research": true,
-    "lead_scrape": false
+    "lead_scrape": true
   },
   "reply_to_self_chat": true,
   "business_description": "Demo receptionist for testing.",
