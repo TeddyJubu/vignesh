@@ -57,17 +57,34 @@ func (p *PromptBuilder) Build(convID string, mode string) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	return p.appendRunbookAndFacts(global, convID, mode)
+}
+
+// BuildSupportStack is system content for bundled layout: SOUL + baseline + runbook + contact facts (no knowledge base).
+func (p *PromptBuilder) BuildSupportStack(convID, mode string) (string, error) {
+	var b strings.Builder
+	soul, err := p.Soul()
+	if err != nil {
+		return "", err
+	}
+	if soul != "" {
+		b.WriteString(soul)
+		b.WriteString("\n\n")
+	}
+	b.WriteString(baseAgentInstructions(p.cfg))
+	return p.appendRunbookAndFacts(b.String(), convID, mode)
+}
+
+func (p *PromptBuilder) appendRunbookAndFacts(stack, convID, mode string) (string, error) {
 	runbook, err := p.cachedRunbook(mode)
 	if err != nil {
 		return "", err
 	}
-
 	var b strings.Builder
-	b.WriteString(global)
+	b.WriteString(stack)
 	if runbook != "" {
 		b.WriteString(runbook)
 	}
-
 	facts, err := p.store.ListContactFacts(convID)
 	if err != nil {
 		return "", err
@@ -103,27 +120,42 @@ func (p *PromptBuilder) cachedGlobalStack() (string, error) {
 	return stack, nil
 }
 
+// Soul returns identity_soul (SOUL.md) for the system prompt.
+func (p *PromptBuilder) Soul() (string, error) {
+	soul, err := p.store.GetAgentNote("identity_soul")
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(soul), nil
+}
+
+// KnowledgeBase returns client instructions (operational rules + KNOWLEDGE.md) for the user-turn knowledge block.
+func (p *PromptBuilder) KnowledgeBase() (string, error) {
+	if note, err := p.store.GetAgentNote("client_instructions"); err != nil {
+		return "", err
+	} else if md := strings.TrimSpace(note); md != "" {
+		return md, nil
+	}
+	return strings.TrimSpace(p.instructionsMD), nil
+}
+
 func (p *PromptBuilder) buildGlobalStack() (string, error) {
 	var b strings.Builder
 	b.WriteString(baseAgentInstructions(p.cfg))
 
-	if soul, err := p.store.GetAgentNote("identity_soul"); err != nil {
+	if soul, err := p.Soul(); err != nil {
 		return "", err
-	} else if strings.TrimSpace(soul) != "" {
+	} else if soul != "" {
 		b.WriteString("\n\n## Soul\n")
-		b.WriteString(strings.TrimSpace(soul))
+		b.WriteString(soul)
 		b.WriteString("\n")
 	}
 
-	if note, err := p.store.GetAgentNote("client_instructions"); err != nil {
+	if kb, err := p.KnowledgeBase(); err != nil {
 		return "", err
-	} else if md := strings.TrimSpace(note); md != "" {
+	} else if kb != "" {
 		b.WriteString("\n\n## Client instructions\n\n")
-		b.WriteString(md)
-		b.WriteString("\n")
-	} else if md := strings.TrimSpace(p.instructionsMD); md != "" {
-		b.WriteString("\n\n## Client instructions\n\n")
-		b.WriteString(md)
+		b.WriteString(kb)
 		b.WriteString("\n")
 	}
 	return b.String(), nil

@@ -6,7 +6,7 @@ import (
 	"strings"
 )
 
-const schemaVersionCurrent = 6
+const schemaVersionCurrent = 11
 
 var contactMigrations = []string{
 	`ALTER TABLE contacts ADD COLUMN paused_until TEXT`,
@@ -91,24 +91,34 @@ var infraMigrations = []string{
 	`CREATE INDEX IF NOT EXISTS idx_booking_requests_guest ON booking_requests(guest_phone, status)`,
 	`CREATE INDEX IF NOT EXISTS idx_messages_phone_role_created ON messages(phone, role, created_at)`,
 	`CREATE INDEX IF NOT EXISTS idx_contacts_collecting_nudge ON contacts(status, nudge_sent_at, paused_until)`,
+	`CREATE TABLE IF NOT EXISTS access_roles (
+		phone TEXT PRIMARY KEY,
+		role TEXT NOT NULL,
+		permissions_json TEXT NOT NULL DEFAULT '{}',
+		created_at DATETIME NOT NULL DEFAULT (datetime('now')),
+		updated_at DATETIME NOT NULL DEFAULT (datetime('now'))
+	)`,
+	`CREATE INDEX IF NOT EXISTS idx_access_roles_role ON access_roles(role, phone)`,
+	`CREATE TABLE IF NOT EXISTS dashboard_otp_codes (
+		phone TEXT NOT NULL,
+		code_hash TEXT NOT NULL,
+		expires_at DATETIME NOT NULL,
+		created_at DATETIME NOT NULL DEFAULT (datetime('now'))
+	)`,
+	`CREATE INDEX IF NOT EXISTS idx_dashboard_otp_phone ON dashboard_otp_codes(phone)`,
+	`CREATE INDEX IF NOT EXISTS idx_dashboard_otp_expires ON dashboard_otp_codes(expires_at)`,
+	`CREATE TABLE IF NOT EXISTS dashboard_sessions (
+		token_hash TEXT PRIMARY KEY,
+		phone TEXT NOT NULL,
+		role TEXT NOT NULL,
+		permissions_json TEXT NOT NULL DEFAULT '{}',
+		expires_at DATETIME NOT NULL,
+		created_at DATETIME NOT NULL DEFAULT (datetime('now'))
+	)`,
+	`CREATE INDEX IF NOT EXISTS idx_dashboard_sessions_phone ON dashboard_sessions(phone)`,
+	`CREATE INDEX IF NOT EXISTS idx_dashboard_sessions_expires ON dashboard_sessions(expires_at)`,
 }
 
-const placeholderRunbookCS = `# Julia CS runbook
-- Answer from contact facts, business description, and memory only — never invent policies.
-- In groups: keep replies short; address the sender; stay on support topics (GBP, local SEO, websites).
-- Escalate billing disputes, refunds, or angry threads to the owner.
-- Use escalate_to_vignesh when unsure or when the user asks for a human.`
-
-const placeholderRunbookSales = `# Julia sales runbook
-- Qualify one missing field per message: name, business_type, service_needed, budget, timeline, current_website.
-- No unprompted pricing; defer firm quotes to Vignesh.
-- When qualified, offer to book a short call and use check_calendar_availability before suggesting times.`
-
-const placeholderRunbookBooking = `# Julia booking runbook
-- Use check_calendar_availability for real slots before proposing times.
-- After the user picks a slot, use book_appointment; only confirm booking when the tool returns booked:true.
-- Collect email with collect_email when needed for calendar invite.
-- If calendar is unavailable, collect best_time and hand off to Vignesh — do not invent slots.`
 
 func migrate(db *sql.DB) error {
 	if _, err := db.Exec(`CREATE TABLE IF NOT EXISTS agent_states (
@@ -151,6 +161,9 @@ func migrate(db *sql.DB) error {
 			return fmt.Errorf("migrate infra: %w", err)
 		}
 	}
+	if err := seedAccessDefaults(db); err != nil {
+		return err
+	}
 	for _, stmt := range contactMigrations {
 		if _, err := db.Exec(stmt); err != nil {
 			if !isDuplicateColumn(err) {
@@ -163,6 +176,35 @@ func migrate(db *sql.DB) error {
 			return err
 		}
 	}
+	if schemaBefore < 7 {
+		if err := refreshIdentitySoul(db); err != nil {
+			return err
+		}
+	}
+	if schemaBefore < 8 {
+		if err := refreshClientInstructions(db); err != nil {
+			return err
+		}
+	}
+	if schemaBefore < 9 {
+		// Ensure the initial allowlist settings exist (safe no-op on conflict).
+		if err := seedAccessDefaults(db); err != nil {
+			return err
+		}
+	}
+	if schemaBefore < 10 {
+		if err := refreshClientInstructions(db); err != nil {
+			return err
+		}
+	}
+	if schemaBefore < 11 {
+		if err := refreshAgentRunbooks(db); err != nil {
+			return err
+		}
+		if err := refreshClientInstructions(db); err != nil {
+			return err
+		}
+	}
 	if schemaBefore < schemaVersionCurrent {
 		if _, err := db.Exec(
 			`INSERT INTO schema_version (version, applied_at) VALUES (?, datetime('now'))
@@ -170,6 +212,42 @@ func migrate(db *sql.DB) error {
 			schemaVersionCurrent,
 		); err != nil {
 			return fmt.Errorf("schema_version: %w", err)
+		}
+	}
+	return nil
+}
+
+func seedAccessDefaults(db *sql.DB) error {
+	// Default WhatsApp inbound gating: allow-all on, empty allow-list.
+	if _, err := db.Exec(
+		`INSERT INTO app_settings (key, value, updated_at) VALUES (?, ?, datetime('now'))
+		 ON CONFLICT(key) DO NOTHING`,
+		"access.allow_all", "1",
+	); err != nil {
+		return fmt.Errorf("seed access.allow_all: %w", err)
+	}
+	if _, err := db.Exec(
+		`INSERT INTO app_settings (key, value, updated_at) VALUES (?, ?, datetime('now'))
+		 ON CONFLICT(key) DO NOTHING`,
+		"access.allow_list", "[]",
+	); err != nil {
+		return fmt.Errorf("seed access.allow_list: %w", err)
+	}
+
+	// Seed default admin if no admins exist.
+	var admins int
+	if err := db.QueryRow(`SELECT COUNT(1) FROM access_roles WHERE role = 'admin'`).Scan(&admins); err != nil {
+		// Table may not exist in legacy DBs; migrations should have created it already.
+		return fmt.Errorf("seed access_roles admin count: %w", err)
+	}
+	if admins == 0 {
+		if _, err := db.Exec(
+			`INSERT INTO access_roles (phone, role, permissions_json, created_at, updated_at)
+			 VALUES (?, 'admin', '{}', datetime('now'), datetime('now'))
+			 ON CONFLICT(phone) DO UPDATE SET role='admin', updated_at=datetime('now')`,
+			"6590013157",
+		); err != nil {
+			return fmt.Errorf("seed default admin: %w", err)
 		}
 	}
 	return nil
@@ -187,10 +265,52 @@ func schemaVersion(db *sql.DB) (int, error) {
 	return v, nil
 }
 
+func refreshClientInstructions(db *sql.DB) error {
+	_, err := db.Exec(
+		`INSERT INTO agent_notes (key, content, updated_at) VALUES (?, ?, datetime('now'))
+		 ON CONFLICT(key) DO UPDATE SET content = excluded.content, updated_at = datetime('now')`,
+		"client_instructions", defaultClientInstructions(),
+	)
+	if err != nil {
+		return fmt.Errorf("refresh agent_note client_instructions: %w", err)
+	}
+	return nil
+}
+
+func refreshAgentRunbooks(db *sql.DB) error {
+	runbooks := map[string]string{
+		"julia-cs":      RunbookCS,
+		"julia-sales":   RunbookSales,
+		"julia-booking": RunbookBooking,
+	}
+	for key, content := range runbooks {
+		if _, err := db.Exec(
+			`INSERT INTO agent_notes (key, content, updated_at) VALUES (?, ?, datetime('now'))
+			 ON CONFLICT(key) DO UPDATE SET content = excluded.content, updated_at = datetime('now')`,
+			key, content,
+		); err != nil {
+			return fmt.Errorf("refresh agent_note %s: %w", key, err)
+		}
+	}
+	return nil
+}
+
+func refreshIdentitySoul(db *sql.DB) error {
+	_, err := db.Exec(
+		`INSERT INTO agent_notes (key, content, updated_at) VALUES (?, ?, datetime('now'))
+		 ON CONFLICT(key) DO UPDATE SET content = excluded.content, updated_at = datetime('now')`,
+		"identity_soul", defaultIdentitySoul(),
+	)
+	if err != nil {
+		return fmt.Errorf("refresh agent_note identity_soul: %w", err)
+	}
+	return nil
+}
+
 func refreshIdentityAgentNotes(db *sql.DB) error {
 	notes := map[string]string{
-		"identity_soul":        defaultIdentitySoul,
-		"client_instructions": defaultClientInstructions,
+		"identity_soul":        defaultIdentitySoul(),
+		"client_instructions": defaultClientInstructions(),
 	}
 	for key, content := range notes {
 		if _, err := db.Exec(
@@ -206,11 +326,11 @@ func refreshIdentityAgentNotes(db *sql.DB) error {
 
 func seedAgentNotes(db *sql.DB) error {
 	seeds := map[string]string{
-		"identity_soul":        defaultIdentitySoul,
-		"client_instructions": defaultClientInstructions,
-		"julia-cs":             placeholderRunbookCS,
-		"julia-sales":          placeholderRunbookSales,
-		"julia-booking":        placeholderRunbookBooking,
+		"identity_soul":        defaultIdentitySoul(),
+		"client_instructions": defaultClientInstructions(),
+		"julia-cs":             RunbookCS,
+		"julia-sales":          RunbookSales,
+		"julia-booking":        RunbookBooking,
 	}
 	for key, content := range seeds {
 		_, err := db.Exec(

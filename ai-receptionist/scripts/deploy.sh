@@ -6,6 +6,11 @@ SSH_HOST="${SSH_HOST:-vignesh}"
 REMOTE_DIR="${REMOTE_DIR:-/opt/ai-receptionist}"
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 
+if [[ "${SKIP_JULIA_EVAL:-}" != "1" ]]; then
+  echo "→ Julia eval gate (set SKIP_JULIA_EVAL=1 to skip)"
+  "${ROOT}/scripts/predeploy-eval.sh"
+fi
+
 echo "→ rsync source to ${SSH_HOST}:${REMOTE_DIR}/src/"
 rsync -az --delete \
   --exclude '*.db' \
@@ -17,7 +22,7 @@ rsync -az --delete \
 echo "→ copy prompts (server config.json is never overwritten from local)"
 scp "${ROOT}/prompt.txt" "${ROOT}/prompt-personal.txt" "${SSH_HOST}:${REMOTE_DIR}/"
 ssh "${SSH_HOST}" "mkdir -p ${REMOTE_DIR}/knowledge"
-scp "${ROOT}/knowledge/instructions.md" "${SSH_HOST}:${REMOTE_DIR}/knowledge/instructions.md"
+scp "${ROOT}/knowledge/instructions.md" "${ROOT}/knowledge/SOUL.md" "${ROOT}/knowledge/KNOWLEDGE.md" "${SSH_HOST}:${REMOTE_DIR}/knowledge/"
 ssh "${SSH_HOST}" "test -f ${REMOTE_DIR}/config.json || cp ${REMOTE_DIR}/src/config.example.json ${REMOTE_DIR}/config.json"
 
 echo "→ build on server (CGO/sqlite)"

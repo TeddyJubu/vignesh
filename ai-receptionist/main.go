@@ -156,6 +156,8 @@ func main() {
 	if httpAddr != "" {
 		distDir := envOr("DASHBOARD_DIST", "dashboard/dist")
 		api = httpapi.New(cfg, appStore, distDir, graphitiURL)
+		api.SetWhatsAppClient(waClient)
+		api.SetPromptMaterials(promptTpl, styleExtra, instructionsMD)
 		api.SetPromptInvalidator(handler.InvalidatePromptCache)
 		go func() {
 			fmt.Println("HTTP API listening on", httpAddr)
