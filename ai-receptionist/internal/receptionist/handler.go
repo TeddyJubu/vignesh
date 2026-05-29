@@ -245,6 +245,9 @@ func (h *Handler) handleDebounced(ctx context.Context, v *events.Message, in wha
 
 	if err := h.process(ctx, v, in, combinedText); err != nil {
 		fmt.Fprintln(os.Stderr, "receptionist:", in.ConvID, err)
+		if hint := ai.ProviderFailureHint(providerNameFromHandler(h), err); hint != "" {
+			fmt.Fprintln(os.Stderr, "hint:", hint)
+		}
 		ops.AppendErrorLog("receptionist/"+in.ConvID, err)
 		h.sendFailureReply(ctx, v, err)
 	}
@@ -550,6 +553,9 @@ func (h *Handler) completeWithPlanner(ctx context.Context, convID string, msgs [
 	if st, err := h.store.GetAgentState(convID); err == nil && st != nil {
 		var state agent.State
 		if json.Unmarshal([]byte(st.StateJSON), &state) == nil && len(state.Plan.Questions) > 0 {
+			if isStaleAgentState(state) {
+				_ = h.store.ClearAgentState(convID)
+			} else {
 			hasPendingPlan = true
 			// Consume the incoming user message as an answer to the next pending question.
 			if state.Answers == nil {
@@ -579,13 +585,14 @@ func (h *Handler) completeWithPlanner(ctx context.Context, convID string, msgs [
 			// Done collecting answers — run tools + collate (keep state until final send succeeds).
 			out, results, err := h.runPlanAndCollate(ctx, convID, &state.Plan, state.Answers, structured, provider)
 			return out, true, false, results, err
+			}
 		}
 	} else if err != nil && err != sql.ErrNoRows {
 		return "", false, false, nil, err
 	}
 
 	if !needsPlannerPath(mode, userText, hasPendingPlan) {
-		fastCtx, cancelFast := budgetCtx(ctx, 20*time.Second)
+		fastCtx, cancelFast := budgetCtx(ctx, fastCompleteTimeout())
 		defer cancelFast()
 		fastStart := time.Now()
 		out, err := h.ai.Complete(fastCtx, msgs, structured)
@@ -594,21 +601,21 @@ func (h *Handler) completeWithPlanner(ctx context.Context, convID string, msgs [
 		return out, structured, false, nil, err
 	}
 
-	planCtx, cancel := budgetCtx(ctx, 6*time.Second)
+	planCtx, cancel := budgetCtx(ctx, plannerTimeout())
 	defer cancel()
 	planStart := time.Now()
 	rawPlan, err := h.ai.Complete(planCtx, buildPlannerMessages(msgs, structured, h.toolReg), false)
 	logTurnPhase(convID, provider, "planner", planStart, err)
 	traceTurn(h.store, convID, "planner", planStart, err)
 	if err != nil {
-		fallbackCtx, cancelFB := budgetCtx(ctx, 20*time.Second)
+		fallbackCtx, cancelFB := budgetCtx(ctx, fastCompleteTimeout())
 		defer cancelFB()
 		out, err := h.ai.Complete(fallbackCtx, msgs, structured)
 		return out, true, false, nil, err
 	}
 	plan, err := agent.ParsePlan(rawPlan)
 	if err != nil {
-		repairCtx, cancelRepair := budgetCtx(ctx, 4*time.Second)
+		repairCtx, cancelRepair := budgetCtx(ctx, plannerRepairTimeout())
 		repaired, errRepair := h.ai.Complete(repairCtx, buildPlannerRepairMessages(rawPlan, structured, h.toolReg), false)
 		cancelRepair()
 		if errRepair == nil {
@@ -616,13 +623,14 @@ func (h *Handler) completeWithPlanner(ctx context.Context, convID string, msgs [
 		}
 	}
 	if err != nil {
-		fallbackCtx, cancelFB := budgetCtx(ctx, 20*time.Second)
+		fallbackCtx, cancelFB := budgetCtx(ctx, fastCompleteTimeout())
 		defer cancelFB()
 		out, err := h.ai.Complete(fallbackCtx, msgs, structured)
 		return out, true, false, nil, err
 	}
-	if err := h.toolReg.ValidatePlannerTools(planAgentTools(plan)); err != nil {
-		fallbackCtx, cancelFB := budgetCtx(ctx, 20*time.Second)
+	agent.NormalizePlan(plan, structured)
+	if err := h.toolReg.ValidatePlannerTools(agent.PlanToolNames(plan)); err != nil {
+		fallbackCtx, cancelFB := budgetCtx(ctx, fastCompleteTimeout())
 		defer cancelFB()
 		out, err := h.ai.Complete(fallbackCtx, msgs, structured)
 		return out, true, false, nil, err
@@ -648,14 +656,14 @@ func (h *Handler) runPlanAndCollate(ctx context.Context, convID string, plan *ag
 	rc.Deps.Calendar = h.calendar
 	toolCtx := tools.ContextWithCalendar(ctx, h.calendar)
 
-	agentCtx, cancel := budgetCtx(toolCtx, 10*time.Second)
+	agentCtx, cancel := budgetCtx(toolCtx, toolsTimeout())
 	defer cancel()
 	toolStart := time.Now()
 	results := agent.RunToolsParallel(agentCtx, rc, plan.Agents)
 	logTurnPhase(convID, provider, "tools", toolStart, nil)
 	traceTurn(h.store, convID, "tools", toolStart, nil)
 
-	collateCtx, cancel2 := budgetCtx(ctx, 20*time.Second)
+	collateCtx, cancel2 := budgetCtx(ctx, collateTimeout())
 	defer cancel2()
 	collateStart := time.Now()
 	collateMsgs := buildCollationMessages(plan, answers, results, structured)
@@ -767,16 +775,21 @@ func (h *Handler) notifyQualifiedLead(ctx context.Context, convID string, in wha
 }
 
 func planAgentTools(plan *agent.Plan) []string {
-	if plan == nil {
-		return nil
+	return agent.PlanToolNames(plan)
+}
+
+func isStaleAgentState(state agent.State) bool {
+	if state.StartedAtUNIX <= 0 {
+		return false
 	}
-	out := make([]string, 0, len(plan.Agents))
-	for _, a := range plan.Agents {
-		if t := strings.TrimSpace(a.Tool); t != "" {
-			out = append(out, t)
-		}
+	return time.Now().Unix()-state.StartedAtUNIX > int64(agentStateMaxAge.Seconds())
+}
+
+func providerNameFromHandler(h *Handler) string {
+	if h == nil || h.ai == nil {
+		return ""
 	}
-	return out
+	return h.ai.Name()
 }
 
 func (h *Handler) buildSystemPrompt(convID string, leadData map[string]string, in whatsapp.InboundContext, language, mode, userText string, stacked bool) (string, error) {

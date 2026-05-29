@@ -152,9 +152,23 @@ func newProviderWithModel(cfg *config.Config, providerName, model string) (Provi
 	}
 }
 
-func ProviderFailureHint(err error) string {
+func ProviderFailureHint(provider string, err error) string {
 	if err == nil {
 		return ""
 	}
-	return fmt.Sprintf("%v", err)
+	msg := err.Error()
+	switch strings.ToLower(strings.TrimSpace(provider)) {
+	case "openai":
+		if strings.Contains(msg, "401") || strings.Contains(msg, "403") {
+			return "OpenAI auth failed — check OPENAI_API_KEY and OPENAI_BASE_URL (default " + defaultOpenAIBaseURL + ")"
+		}
+		if strings.Contains(msg, "429") {
+			return "OpenAI rate limit — try again shortly or switch AI_PROVIDER=ollama"
+		}
+	case "ollama":
+		if strings.Contains(msg, "401") || strings.Contains(msg, "403") {
+			return "Ollama Cloud auth failed — check OLLAMA_API_KEY at ollama.com/settings/keys"
+		}
+	}
+	return msg
 }

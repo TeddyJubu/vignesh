@@ -66,8 +66,12 @@ func (p *OpenAICompatProvider) Complete(ctx context.Context, messages []ChatMess
 		)
 	}
 	stream := p.client.Responses.NewStreaming(ctx, params)
+	defer stream.Close()
 	var b strings.Builder
 	for stream.Next() {
+		if err := ctx.Err(); err != nil {
+			return "", fmt.Errorf("%s stream cancelled: %w", strings.ToUpper(p.name), err)
+		}
 		ev := stream.Current()
 		if ev.Delta != "" {
 			b.WriteString(ev.Delta)

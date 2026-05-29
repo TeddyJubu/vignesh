@@ -80,6 +80,7 @@ Environment overrides:
 - `CONFIG_PATH`, `PROMPT_PATH`, `INSTRUCTIONS_PATH` (default `knowledge/instructions.md`); soul source file `knowledge/SOUL.md` (embedded at build, synced to DB on migrate v7)
 - `AI_PROVIDER` — `ollama` (default) or `openai`
 - `OPENAI_API_KEY`, `OPENAI_BASE_URL` (default `https://sg.api.openai.com`), `OPENAI_MODEL`
+- Optional latency budgets (seconds): `PLANNER_TIMEOUT_SEC`, `TOOLS_TIMEOUT_SEC`, `COLLATE_TIMEOUT_SEC`, `FAST_COMPLETE_TIMEOUT_SEC`, `OVERALL_AI_TIMEOUT_SEC`, `ACK_DELAY_SEC`, `AGENT_STATE_MAX_AGE_SEC`
 
 ## Julia eval (pre-deploy)
 

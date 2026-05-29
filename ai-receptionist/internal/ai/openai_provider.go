@@ -69,21 +69,30 @@ func (p *OpenAIProvider) Complete(ctx context.Context, messages []ChatMessage, j
 		)
 	}
 	stream := p.client.Responses.NewStreaming(ctx, params)
+	defer stream.Close()
 	var b strings.Builder
 	for stream.Next() {
+		if err := ctx.Err(); err != nil {
+			return "", fmt.Errorf("OpenAI stream cancelled: %w", err)
+		}
 		ev := stream.Current()
 		if ev.Delta != "" {
 			b.WriteString(ev.Delta)
 		}
 	}
 	if err := stream.Err(); err != nil {
-		return "", err
+		return "", fmt.Errorf("OpenAI stream error (model=%s base=%s): %w", p.model, p.baseURL, err)
 	}
 	out := strings.TrimSpace(b.String())
 	if out == "" {
-		return "", fmt.Errorf("OpenAI returned empty message")
+		return "", fmt.Errorf("OpenAI returned empty message (model=%s base=%s)", p.model, p.baseURL)
 	}
 	return out, nil
+}
+
+// DefaultOpenAIBaseURL is the Singapore regional API endpoint used when OPENAI_BASE_URL is unset.
+func DefaultOpenAIBaseURL() string {
+	return defaultOpenAIBaseURL
 }
 
 func openAIInputItems(messages []ChatMessage) responses.ResponseInputParam {

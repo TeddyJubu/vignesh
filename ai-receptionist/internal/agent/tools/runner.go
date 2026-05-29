@@ -66,6 +66,15 @@ func (r *Runner) RunParallel(ctx context.Context, rc RunContext, tasks []Task) [
 
 func (r *Runner) runOne(ctx context.Context, rc RunContext, t Task) Result {
 	start := time.Now()
+	if err := ctx.Err(); err != nil {
+		return Result{
+			TaskName:  strings.TrimSpace(t.Name),
+			Tool:      strings.TrimSpace(t.Tool),
+			Input:     t.Input,
+			Error:     err.Error(),
+			LatencyMS: time.Since(start).Milliseconds(),
+		}
+	}
 	res := Result{
 		TaskName: strings.TrimSpace(t.Name),
 		Tool:     strings.TrimSpace(t.Tool),

@@ -2,6 +2,7 @@ package receptionist
 
 import (
 	"encoding/json"
+	"fmt"
 	"strings"
 
 	"ai-receptionist/internal/agent"
@@ -22,7 +23,9 @@ func buildPlannerMessages(msgs []ai.ChatMessage, structured bool, reg *tools.Reg
 	b.WriteString("- Never ask for email before the user has given a preferred day, time, and timezone for a call.\n")
 	b.WriteString("- For \"what services\" questions, answer from the business description — never repeat the user's question.\n")
 	b.WriteString("- questions[] must contain exactly ONE question mark total.\n")
-	b.WriteString("- Max 4 agents.\n")
+	b.WriteString("- Max ")
+	b.WriteString(fmt.Sprintf("%d", agent.MaxPlannerAgents))
+	b.WriteString(" agents.\n")
 	b.WriteString("- Use registered tools only.\n")
 	if structured {
 		b.WriteString("- final_response_mode must be \"structured\".\n")
