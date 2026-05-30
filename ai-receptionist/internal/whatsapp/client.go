@@ -24,6 +24,8 @@ type Client struct {
 
 	ctx     context.Context
 	pairMu  sync.Mutex
+	pairGen int
+	pairCancel context.CancelFunc
 	pairing pairingState
 }
 
@@ -86,12 +88,32 @@ func (c *Client) Start(ctx context.Context) error {
 
 func (c *Client) startPairing() {
 	c.pairMu.Lock()
-	defer c.pairMu.Unlock()
-	go c.runPairingLoginLoop(c.ctx)
+	c.pairGen++
+	gen := c.pairGen
+	if c.pairCancel != nil {
+		c.pairCancel()
+		c.pairCancel = nil
+	}
+	pairCtx, cancel := context.WithCancel(c.ctx)
+	c.pairCancel = cancel
+	c.pairMu.Unlock()
+
+	go c.runPairingLoginLoop(pairCtx, gen)
 }
 
-func (c *Client) runPairingLoginLoop(ctx context.Context) {
+func (c *Client) runPairingLoginLoop(ctx context.Context, gen int) {
+	defer func() {
+		c.pairMu.Lock()
+		if c.pairGen == gen {
+			c.pairCancel = nil
+		}
+		c.pairMu.Unlock()
+	}()
+
 	for {
+		if ctx.Err() != nil {
+			return
+		}
 		if c.WM.IsLoggedIn() && c.WM.IsConnected() {
 			return
 		}
@@ -99,12 +121,19 @@ func (c *Client) runPairingLoginLoop(ctx context.Context) {
 
 		qrChan, _ := c.WM.GetQRChannel(ctx)
 		if err := c.WM.Connect(); err != nil {
+			if ctx.Err() != nil {
+				return
+			}
 			fmt.Fprintln(os.Stderr, "connect:", err)
 			time.Sleep(3 * time.Second)
 			continue
 		}
 		retry := false
 		for evt := range qrChan {
+			if ctx.Err() != nil {
+				c.WM.Disconnect()
+				return
+			}
 			if evt.Event == "code" {
 				c.noteQRCode(evt.Code)
 				fmt.Println("Scan this QR with WhatsApp (Linked Devices):")
@@ -127,6 +156,9 @@ func (c *Client) runPairingLoginLoop(ctx context.Context) {
 				}
 				return
 			}
+		}
+		if ctx.Err() != nil {
+			return
 		}
 		if c.WM.IsLoggedIn() {
 			_ = c.connectLinked(ctx)
