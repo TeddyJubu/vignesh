@@ -59,6 +59,11 @@ func (w *AsyncWorker) tick(ctx context.Context) {
 	}
 }
 
+// ProcessOneBatch runs one worker poll cycle (used in tests).
+func (w *AsyncWorker) ProcessOneBatch(ctx context.Context) {
+	w.tick(ctx)
+}
+
 func (w *AsyncWorker) processOne(ctx context.Context, job store.AsyncJob) {
 	log.Printf("async_worker: start job_id=%s job_type=%s conv_id=%s", job.ID, job.JobType, job.ConvID)
 	h := w.Handlers[strings.ToLower(job.JobType)]
