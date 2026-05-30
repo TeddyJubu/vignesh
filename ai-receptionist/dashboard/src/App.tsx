@@ -4,6 +4,7 @@ import { AppShell } from '@/components/app-shell'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Page, PageHeader } from '@/components/page'
 import { apiFetch, clearSessionToken, getSessionToken } from '@/lib/api'
+import { PairingProvider } from '@/lib/pairing-context'
 
 const OverviewPage = lazy(() =>
   import('@/pages/overview').then((m) => ({ default: m.OverviewPage })),
@@ -33,6 +34,9 @@ const IntegrationsComposioPage = lazy(() =>
   import('@/pages/integrations-composio').then((m) => ({
     default: m.IntegrationsComposioPage,
   })),
+)
+const PairPage = lazy(() =>
+  import('@/pages/pair').then((m) => ({ default: m.PairPage })),
 )
 const LoginPage = lazy(() =>
   import('@/pages/login').then((m) => ({ default: m.LoginPage })),
@@ -132,29 +136,32 @@ export default function App() {
   }
 
   return (
-    <AppShell>
-      <Suspense fallback={<PageFallback />}>
-        <Routes>
-          <Route path="/" element={<OverviewPage />} />
-          <Route
-            path="/settings/providers"
-            element={<SettingsProvidersPage />}
-          />
-          <Route
-            path="/settings/instructions"
-            element={<SettingsInstructionsPage />}
-          />
-          <Route path="/settings/access" element={<SettingsAccessPage />} />
-          <Route path="/memory/recall" element={<MemoryRecallPage />} />
-          <Route path="/memory/dreams" element={<MemoryDreamsPage />} />
-          <Route
-            path="/integrations/composio"
-            element={<IntegrationsComposioPage />}
-          />
-          <Route path="/overview" element={<Navigate to="/" replace />} />
-          <Route path="*" element={<NotFound />} />
-        </Routes>
-      </Suspense>
-    </AppShell>
+    <PairingProvider>
+      <AppShell>
+        <Suspense fallback={<PageFallback />}>
+          <Routes>
+            <Route path="/" element={<OverviewPage />} />
+            <Route path="/pair" element={<PairPage />} />
+            <Route
+              path="/settings/providers"
+              element={<SettingsProvidersPage />}
+            />
+            <Route
+              path="/settings/instructions"
+              element={<SettingsInstructionsPage />}
+            />
+            <Route path="/settings/access" element={<SettingsAccessPage />} />
+            <Route path="/memory/recall" element={<MemoryRecallPage />} />
+            <Route path="/memory/dreams" element={<MemoryDreamsPage />} />
+            <Route
+              path="/integrations/composio"
+              element={<IntegrationsComposioPage />}
+            />
+            <Route path="/overview" element={<Navigate to="/" replace />} />
+            <Route path="*" element={<NotFound />} />
+          </Routes>
+        </Suspense>
+      </AppShell>
+    </PairingProvider>
   )
 }

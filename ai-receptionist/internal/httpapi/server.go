@@ -41,6 +41,8 @@ type Server struct {
 
 	pingMu    sync.Mutex
 	pingCache pingCacheEntry
+
+	pairingHub *pairingHub
 }
 
 type pingCacheEntry struct {
@@ -85,6 +87,10 @@ func (s *Server) Start(ctx context.Context, addr string) error {
 	mux.HandleFunc("/api/me", s.handleMe)
 	mux.HandleFunc("/api/access/roles", s.handleAccessRoles)
 	mux.HandleFunc("/api/access/allowlist", s.handleAccessAllowlist)
+	mux.HandleFunc("/api/pairing", s.handlePairingState)
+	mux.HandleFunc("/api/pairing/stream", s.handlePairingStream)
+	mux.HandleFunc("/api/pairing/qr.png", s.handlePairingQR)
+	mux.HandleFunc("/api/pairing/refresh", s.handlePairingRefresh)
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 200, map[string]any{"ok": true})
 	})
@@ -113,6 +119,11 @@ func (s *Server) Start(ctx context.Context, addr string) error {
 		return nil
 	}
 	return err
+}
+
+// StartPairingHub begins pairing poll + SSE publish loop (call after SetWhatsAppClient).
+func (s *Server) StartPairingHub(ctx context.Context) {
+	s.startPairingPollLoop(ctx)
 }
 
 // SetPromptInvalidator clears cached prompt fragments when dashboard instructions change.
@@ -289,6 +300,8 @@ func requiredPermission(r *http.Request) string {
 		return "memory"
 	case strings.HasPrefix(p, "/api/access/"):
 		return "access"
+	case strings.HasPrefix(p, "/api/pairing"):
+		return "" // admin-only enforced in handlers
 	default:
 		return ""
 	}
