@@ -1,6 +1,8 @@
 package whatsapp
 
 import (
+	"context"
+	"fmt"
 	"sync"
 	"time"
 )
@@ -175,4 +177,40 @@ func (c *Client) RequestPairingRefresh() {
 	c.notePairingEvent("refresh", "Generating a new QR code…")
 	c.WM.Disconnect()
 	c.startPairing()
+}
+
+// UnlinkWhatsApp revokes the linked-device session and starts a fresh QR pairing flow.
+func (c *Client) UnlinkWhatsApp(ctx context.Context) error {
+	if c == nil || c.WM == nil {
+		return fmt.Errorf("whatsapp not configured")
+	}
+
+	c.pairMu.Lock()
+	c.pairGen++
+	if c.pairCancel != nil {
+		c.pairCancel()
+		c.pairCancel = nil
+	}
+	c.pairMu.Unlock()
+
+	c.clearPairingQR()
+	c.notePairingEvent("unlink", "Unlinking WhatsApp…")
+
+	if c.WM.IsLoggedIn() {
+		if err := c.WM.Logout(ctx); err != nil {
+			c.WM.Disconnect()
+			if c.WM.Store != nil {
+				_ = c.WM.Store.Delete(ctx)
+			}
+		}
+	} else {
+		c.WM.Disconnect()
+		if c.WM.Store != nil && c.WM.Store.ID != nil {
+			_ = c.WM.Store.Delete(ctx)
+		}
+	}
+
+	c.notePairingEvent("unlinked", "WhatsApp unlinked. Scan a new QR to connect.")
+	c.startPairing()
+	return nil
 }

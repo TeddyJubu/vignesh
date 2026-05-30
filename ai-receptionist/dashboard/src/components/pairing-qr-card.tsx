@@ -1,10 +1,19 @@
 import { useEffect, useState } from 'react'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from '@/components/ui/dialog'
 import { usePairingOptional } from '@/lib/pairing-context'
 import { derivePairingStatus } from '@/lib/pairing-types'
 import { getSessionToken } from '@/lib/api'
-import { Loader2, RefreshCcw, Smartphone } from 'lucide-react'
+import { Loader2, RefreshCcw, Smartphone, Unlink } from 'lucide-react'
 
 function apiBase(): string {
   return import.meta.env.BASE_URL.replace(/\/?$/, '/')
@@ -14,8 +23,12 @@ export function PairingQRCard({ compact = false }: { compact?: boolean }) {
   const ctx = usePairingOptional()
   const pairing = ctx?.pairing ?? null
   const status = derivePairingStatus(pairing)
+  const linked = pairing?.logged_in === true
   const [qrURL, setQrURL] = useState<string | null>(null)
   const [qrLoading, setQrLoading] = useState(false)
+  const [unlinkOpen, setUnlinkOpen] = useState(false)
+  const [unlinkBusy, setUnlinkBusy] = useState(false)
+  const [unlinkError, setUnlinkError] = useState<string | null>(null)
 
   useEffect(() => {
     if (!pairing?.qr_available || !pairing.updated_at) {
@@ -57,6 +70,20 @@ export function PairingQRCard({ compact = false }: { compact?: boolean }) {
     }
   }, [pairing?.qr_available, pairing?.updated_at])
 
+  async function confirmUnlink() {
+    if (!ctx) return
+    setUnlinkBusy(true)
+    setUnlinkError(null)
+    try {
+      await ctx.unlinkWhatsApp()
+      setUnlinkOpen(false)
+    } catch (e: any) {
+      setUnlinkError(e?.message ?? 'Could not unlink WhatsApp')
+    } finally {
+      setUnlinkBusy(false)
+    }
+  }
+
   if (status === 'connected') {
     return (
       <Card>
@@ -66,8 +93,18 @@ export function PairingQRCard({ compact = false }: { compact?: boolean }) {
             WhatsApp connected
           </CardTitle>
         </CardHeader>
-        <CardContent className="text-sm text-muted-foreground">
-          {pairing?.detail ?? 'Session is linked and online.'}
+        <CardContent className="space-y-4">
+          <p className="text-sm text-muted-foreground">
+            {pairing?.detail ?? 'Session is linked and online.'}
+          </p>
+          <UnlinkButton
+            open={unlinkOpen}
+            onOpenChange={setUnlinkOpen}
+            busy={unlinkBusy}
+            error={unlinkError}
+            disabled={!ctx}
+            onConfirm={() => void confirmUnlink()}
+          />
         </CardContent>
       </Card>
     )
@@ -130,8 +167,72 @@ export function PairingQRCard({ compact = false }: { compact?: boolean }) {
           >
             New QR
           </Button>
+          {linked ? (
+            <UnlinkButton
+              open={unlinkOpen}
+              onOpenChange={setUnlinkOpen}
+              busy={unlinkBusy}
+              error={unlinkError}
+              disabled={!ctx}
+              onConfirm={() => void confirmUnlink()}
+            />
+          ) : null}
         </div>
       </CardContent>
     </Card>
+  )
+}
+
+function UnlinkButton({
+  open,
+  onOpenChange,
+  busy,
+  error,
+  disabled,
+  onConfirm,
+}: {
+  open: boolean
+  onOpenChange: (open: boolean) => void
+  busy: boolean
+  error: string | null
+  disabled: boolean
+  onConfirm: () => void
+}) {
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogTrigger
+        render={
+          <Button variant="destructive" size="sm" disabled={disabled}>
+            <Unlink className="mr-2 h-4 w-4" />
+            Unlink WhatsApp
+          </Button>
+        }
+      />
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Unlink WhatsApp?</DialogTitle>
+          <DialogDescription>
+            This removes the linked device from WhatsApp and stops the bot from
+            sending or receiving messages. You will need to scan a new QR code to
+            connect again.
+          </DialogDescription>
+        </DialogHeader>
+        {error ? (
+          <p className="text-sm text-destructive">{error}</p>
+        ) : null}
+        <DialogFooter>
+          <Button
+            variant="secondary"
+            onClick={() => onOpenChange(false)}
+            disabled={busy}
+          >
+            Cancel
+          </Button>
+          <Button variant="destructive" onClick={onConfirm} disabled={busy}>
+            {busy ? 'Unlinking…' : 'Unlink'}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   )
 }

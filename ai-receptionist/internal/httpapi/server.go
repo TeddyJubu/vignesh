@@ -91,6 +91,7 @@ func (s *Server) Start(ctx context.Context, addr string) error {
 	mux.HandleFunc("/api/pairing/stream", s.handlePairingStream)
 	mux.HandleFunc("/api/pairing/qr.png", s.handlePairingQR)
 	mux.HandleFunc("/api/pairing/refresh", s.handlePairingRefresh)
+	mux.HandleFunc("/api/pairing/unlink", s.handlePairingUnlink)
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 200, map[string]any{"ok": true})
 	})
