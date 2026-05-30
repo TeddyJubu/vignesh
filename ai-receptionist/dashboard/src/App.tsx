@@ -1,9 +1,8 @@
-import { lazy, Suspense, useEffect, useState } from 'react'
+import { lazy, Suspense } from 'react'
 import { Navigate, Route, Routes } from 'react-router-dom'
 import { AppShell } from '@/components/app-shell'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Page, PageHeader } from '@/components/page'
-import { apiFetch, clearSessionToken, getSessionToken } from '@/lib/api'
 import { PairingProvider } from '@/lib/pairing-context'
 
 const OverviewPage = lazy(() =>
@@ -38,9 +37,6 @@ const IntegrationsComposioPage = lazy(() =>
 const PairPage = lazy(() =>
   import('@/pages/pair').then((m) => ({ default: m.PairPage })),
 )
-const LoginPage = lazy(() =>
-  import('@/pages/login').then((m) => ({ default: m.LoginPage })),
-)
 
 function PageFallback() {
   return (
@@ -67,66 +63,6 @@ function NotFound() {
 }
 
 export default function App() {
-  const [ready, setReady] = useState(false)
-  const [authed, setAuthed] = useState<boolean>(() => Boolean(getSessionToken()))
-
-  useEffect(() => {
-    let cancelled = false
-    async function boot() {
-      try {
-        await apiFetch('/me')
-        if (!cancelled) {
-          setAuthed(true)
-          setReady(true)
-        }
-      } catch (e: any) {
-        const status = typeof e?.status === 'number' ? e.status : undefined
-        if (status === 401 || status === 403) {
-          clearSessionToken()
-          if (!cancelled) {
-            setAuthed(false)
-            setReady(true)
-          }
-          return
-        }
-        if (!cancelled) {
-          // If the server is down, still render the shell so the user sees the usual error handling on pages.
-          setAuthed(true)
-          setReady(true)
-        }
-      }
-    }
-    void boot()
-    return () => {
-      cancelled = true
-    }
-  }, [])
-
-  if (!ready) {
-    return (
-      <AppShell>
-        <Suspense fallback={<PageFallback />}>
-          <PageFallback />
-        </Suspense>
-      </AppShell>
-    )
-  }
-
-  if (!authed) {
-    return (
-      <AppShell>
-        <Suspense fallback={<PageFallback />}>
-          <Routes>
-            <Route
-              path="*"
-              element={<LoginPage onLoggedIn={() => setAuthed(true)} />}
-            />
-          </Routes>
-        </Suspense>
-      </AppShell>
-    )
-  }
-
   return (
     <PairingProvider>
       <AppShell>

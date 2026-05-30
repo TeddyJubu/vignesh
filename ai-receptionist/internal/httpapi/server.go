@@ -140,126 +140,19 @@ func (s *Server) Shutdown(ctx context.Context) error {
 }
 
 func (s *Server) withAuth(next http.Handler) http.Handler {
-	token := strings.TrimSpace(os.Getenv("DASHBOARD_AUTH_TOKEN"))
-	user := strings.TrimSpace(os.Getenv("DASHBOARD_BASIC_USER"))
-	pass := strings.TrimSpace(os.Getenv("DASHBOARD_BASIC_PASS"))
-
-	enabled := token != "" || user != "" || pass != ""
-
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Keep health endpoint unauthenticated for basic liveness checks.
 		if r.URL != nil && r.URL.Path == "/healthz" {
 			next.ServeHTTP(w, r)
 			return
 		}
-
-		// If no env auth is configured, preserve legacy behavior:
-		// treat the dashboard as open/admin.
-		if !enabled {
-			actor := Actor{
-				Phone:       "",
-				Role:        "admin",
-				Permissions: map[string]bool{},
-				Source:      "open",
-			}
-			r = r.WithContext(ContextWithActor(r.Context(), actor))
-			next.ServeHTTP(w, r)
-			return
+		actor := Actor{
+			Phone:       "",
+			Role:        "admin",
+			Permissions: map[string]bool{},
+			Source:      "open",
 		}
-
-		// Allow OTP login endpoints without prior auth.
-		if r.URL != nil {
-			switch r.URL.Path {
-			case "/api/auth/request-otp", "/api/auth/verify-otp":
-				next.ServeHTTP(w, r)
-				return
-			}
-		}
-
-		// Option A: Bearer token or X-Admin-Token.
-		if token != "" {
-			auth := strings.TrimSpace(r.Header.Get("Authorization"))
-			if strings.HasPrefix(strings.ToLower(auth), "bearer ") {
-				raw := strings.TrimSpace(auth[len("bearer "):])
-				if raw == token {
-					actor := Actor{
-						Phone:       "",
-						Role:        "admin",
-						Permissions: map[string]bool{},
-						Source:      "env_token",
-					}
-					r = r.WithContext(ContextWithActor(r.Context(), actor))
-					next.ServeHTTP(w, r)
-					return
-				}
-				// Otherwise treat as a session token.
-				if sess, err := s.store.GetDashboardSessionByToken(raw); err == nil && sess != nil {
-					actor := Actor{
-						Phone:       sess.Phone,
-						Role:        sess.Role,
-						Permissions: sess.Permissions,
-						Source:      "session",
-					}
-					r = r.WithContext(ContextWithActor(r.Context(), actor))
-					if !s.authorizeRequest(r) {
-						writeJSON(w, http.StatusForbidden, map[string]any{"error": "forbidden"})
-						return
-					}
-					next.ServeHTTP(w, r)
-					return
-				}
-			}
-			if strings.TrimSpace(r.Header.Get("X-Admin-Token")) == token {
-				actor := Actor{
-					Phone:       "",
-					Role:        "admin",
-					Permissions: map[string]bool{},
-					Source:      "env_token",
-				}
-				r = r.WithContext(ContextWithActor(r.Context(), actor))
-				next.ServeHTTP(w, r)
-				return
-			}
-		}
-
-		// Option B: Basic auth.
-		if user != "" || pass != "" {
-			u, p, ok := r.BasicAuth()
-			if ok && subtleConstantTimeEquals(u, user) && subtleConstantTimeEquals(p, pass) {
-				actor := Actor{
-					Phone:       "",
-					Role:        "admin",
-					Permissions: map[string]bool{},
-					Source:      "basic",
-				}
-				r = r.WithContext(ContextWithActor(r.Context(), actor))
-				next.ServeHTTP(w, r)
-				return
-			}
-		}
-
-		// Fallback: allow session tokens even if env token isn't set.
-		if auth := strings.TrimSpace(r.Header.Get("Authorization")); strings.HasPrefix(strings.ToLower(auth), "bearer ") {
-			raw := strings.TrimSpace(auth[len("bearer "):])
-			if sess, err := s.store.GetDashboardSessionByToken(raw); err == nil && sess != nil {
-				actor := Actor{
-					Phone:       sess.Phone,
-					Role:        sess.Role,
-					Permissions: sess.Permissions,
-					Source:      "session",
-				}
-				r = r.WithContext(ContextWithActor(r.Context(), actor))
-				if !s.authorizeRequest(r) {
-					writeJSON(w, http.StatusForbidden, map[string]any{"error": "forbidden"})
-					return
-				}
-				next.ServeHTTP(w, r)
-				return
-			}
-		}
-
-		w.Header().Set("WWW-Authenticate", `Basic realm="ai-receptionist dashboard"`)
-		writeJSON(w, http.StatusUnauthorized, map[string]any{"error": "unauthorized"})
+		r = r.WithContext(ContextWithActor(r.Context(), actor))
+		next.ServeHTTP(w, r)
 	})
 }
 
@@ -306,27 +199,6 @@ func requiredPermission(r *http.Request) string {
 	default:
 		return ""
 	}
-}
-
-func subtleConstantTimeEquals(a, b string) bool {
-	// Avoid importing crypto/subtle just for the admin dashboard; best-effort constant time.
-	// If lengths differ, still do the loop to keep timing closer.
-	n := len(a)
-	if len(b) > n {
-		n = len(b)
-	}
-	var out byte
-	for i := 0; i < n; i++ {
-		var ca, cb byte
-		if i < len(a) {
-			ca = a[i]
-		}
-		if i < len(b) {
-			cb = b[i]
-		}
-		out |= ca ^ cb
-	}
-	return out == 0 && len(a) == len(b)
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {
