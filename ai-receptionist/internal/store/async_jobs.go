@@ -158,3 +158,32 @@ func scanAsyncJobs(rows *sql.Rows) ([]AsyncJob, error) {
 	}
 	return out, rows.Err()
 }
+
+// FirstPendingAsyncJob returns the oldest pending job without claiming it.
+func (d *DB) FirstPendingAsyncJob() (*AsyncJob, error) {
+	row := d.db.QueryRow(
+		`SELECT id, conv_id, job_type, status, payload, result, error, notify_owner, created_at, updated_at
+		 FROM async_jobs WHERE status = 'pending' ORDER BY created_at ASC LIMIT 1`,
+	)
+	var j AsyncJob
+	var errMsg sql.NullString
+	var created, updated string
+	var notify int
+	if err := row.Scan(&j.ID, &j.ConvID, &j.JobType, &j.Status, &j.Payload, &j.Result, &errMsg, &notify, &created, &updated); err != nil {
+		if err == sql.ErrNoRows {
+			return nil, nil
+		}
+		return nil, err
+	}
+	j.NotifyOwner = notify != 0
+	if errMsg.Valid {
+		j.Error = errMsg.String
+	}
+	if t, err := parseSQLiteTime(created); err == nil {
+		j.CreatedAt = t
+	}
+	if t, err := parseSQLiteTime(updated); err == nil {
+		j.UpdatedAt = t
+	}
+	return &j, nil
+}
