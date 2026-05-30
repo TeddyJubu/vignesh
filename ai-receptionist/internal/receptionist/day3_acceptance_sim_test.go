@@ -220,7 +220,7 @@ func TestDay3AcceptanceSim(t *testing.T) {
 	})
 
 	t.Run("4_outbound_book_messaging_and_5_guest_slot_confirm", func(t *testing.T) {
-		h, db, sent, _ := newDay3Handler(t)
+		h, db, sent, cfg := newDay3Handler(t)
 		msg := "Book a meeting with John Tan, +6598765432, about Epicware partnership"
 		ctx, v, in := simInbound(owner, msg)
 		if err := h.process(ctx, v, in, msg); err != nil {
@@ -233,33 +233,44 @@ func TestDay3AcceptanceSim(t *testing.T) {
 		if pending == nil {
 			t.Fatal("no pending outbound job")
 		}
-		slots := []string{"Mon 3pm SGT", "Tue 10am SGT", "Wed 2pm SGT"}
-		slotsJSON, _ := json.Marshal(slots)
-		_, _ = db.InsertBookingRequest(store.BookingRequest{
-			ID: pending.ID, OwnerConv: owner, GuestPhone: guest, GuestName: "John Tan",
-			Status: "awaiting_guest", GuestSlotsJSON: string(slotsJSON),
-		})
-		_ = db.UpdateAsyncJobStatus(pending.ID, "completed", "simulated outbound", "")
-
-		sent = func() []string { return nil } // reset via new capture
-		var guestSent []string
-		whatsapp.SetTestHooks(
-			func(_ context.Context, chat types.JID, text string) error {
-				guestSent = append(guestSent, fmt.Sprintf("→%s: %s", chat.User, text))
-				return nil
-			},
-			func(context.Context, types.JID, bool) {},
-		)
+		env := ops.WorkerEnv{Store: db, Cfg: cfg, WA: &whatsapp.Client{}}
+		w := &ops.AsyncWorker{Store: db, Cfg: cfg, Handlers: ops.DefaultJobHandlers(env)}
+		w.ProcessOneBatch(ctx)
+		j, _ := db.GetAsyncJob(pending.ID)
+		if j.Status != "completed" {
+			t.Fatalf("job status=%q err=%q", j.Status, j.Error)
+		}
+		br, _ := db.GetActiveBookingByGuest(guest)
+		if br == nil || br.Status != "awaiting_guest" {
+			t.Fatalf("booking=%+v", br)
+		}
+		guestMessaged := false
+		for _, line := range sent() {
+			if strings.Contains(line, guest+":") && strings.Contains(line, "Pick a slot") {
+				guestMessaged = true
+				break
+			}
+		}
+		if !guestMessaged {
+			t.Fatalf("expected worker guest slot message, sent=%v", sent())
+		}
 
 		gctx, gv, gin := simInbound(guest, "2")
 		gin.Sender = guest
 		if !h.TryHandleGuestBookingReply(gctx, gv, gin) {
 			t.Fatal("expected guest reply handled")
 		}
-		if len(guestSent) < 1 || !strings.Contains(guestSent[0], "Confirmed") {
-			t.Fatalf("guest=%v", guestSent)
+		confirmed := false
+		for _, line := range sent() {
+			if strings.Contains(line, "Confirmed") {
+				confirmed = true
+				break
+			}
 		}
-		br, _ := db.GetActiveBookingByGuest(guest)
+		if !confirmed {
+			t.Fatalf("guest confirm=%v", sent())
+		}
+		br, _ = db.GetActiveBookingByGuest(guest)
 		if br != nil && br.Status == "awaiting_guest" {
 			t.Fatal("booking should be confirmed")
 		}
