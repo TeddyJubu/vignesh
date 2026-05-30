@@ -251,6 +251,29 @@ func (s *Server) handlePairingRefresh(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, snap)
 }
 
+func (s *Server) handlePairingUnlink(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	if !s.requireAdmin(w, r) {
+		return
+	}
+	if s.wa == nil {
+		writeJSON(w, 503, map[string]any{"error": "whatsapp not configured"})
+		return
+	}
+	if err := s.wa.UnlinkWhatsApp(r.Context()); err != nil {
+		writeJSON(w, 500, map[string]any{"error": err.Error()})
+		return
+	}
+	snap := buildPairingPayload(s.wa)
+	if s.pairingHub != nil {
+		s.pairingHub.publish(s.wa)
+	}
+	writeJSON(w, 200, snap)
+}
+
 func renderQRPNGForTest(code string) ([]byte, error) {
 	q, err := qrcode.New(code, qrcode.Medium)
 	if err != nil {

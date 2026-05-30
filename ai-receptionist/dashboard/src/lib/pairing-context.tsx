@@ -16,6 +16,7 @@ type PairingContextValue = {
   streamConnected: boolean
   refresh: () => Promise<void>
   requestNewQR: () => Promise<void>
+  unlinkWhatsApp: () => Promise<void>
 }
 
 const PairingContext = createContext<PairingContextValue | null>(null)
@@ -91,6 +92,13 @@ export function PairingProvider({ children }: PropsWithChildren) {
     applySnapshot(snap)
   }, [applySnapshot])
 
+  const unlinkWhatsApp = useCallback(async () => {
+    const snap = await apiFetch<PairingSnapshot>('/pairing/unlink', {
+      method: 'POST',
+    })
+    applySnapshot(snap)
+  }, [applySnapshot])
+
   useEffect(() => {
     mounted.current = true
     const ac = new AbortController()
@@ -130,8 +138,8 @@ export function PairingProvider({ children }: PropsWithChildren) {
   }, [applySnapshot, refresh])
 
   const value = useMemo(
-    () => ({ pairing, streamConnected, refresh, requestNewQR }),
-    [pairing, streamConnected, refresh, requestNewQR],
+    () => ({ pairing, streamConnected, refresh, requestNewQR, unlinkWhatsApp }),
+    [pairing, streamConnected, refresh, requestNewQR, unlinkWhatsApp],
   )
 
   return (
