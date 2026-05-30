@@ -135,7 +135,7 @@ func (c *Client) PairingSnapshot() PairingSnapshot {
 		snap.QRAvailable = false
 		return snap
 	}
-	if qr != "" && !loggedIn {
+	if qr != "" {
 		snap.QRAvailable = true
 		snap.UpdatedAt = isoPtr(updated)
 		snap.ExpiresAt = isoPtr(expires)
@@ -145,6 +145,10 @@ func (c *Client) PairingSnapshot() PairingSnapshot {
 		if detail != "" {
 			snap.Detail = strPtr(detail)
 		}
+		return snap
+	}
+	if loggedIn && !connected {
+		snap.Detail = strPtr("Session exists but is offline — use Unlink WhatsApp or wait for reconnect.")
 		return snap
 	}
 	if event != "" {
@@ -208,6 +212,10 @@ func (c *Client) UnlinkWhatsApp(ctx context.Context) error {
 		if c.WM.Store != nil && c.WM.Store.ID != nil {
 			_ = c.WM.Store.Delete(ctx)
 		}
+	}
+
+	if err := c.recreateWhatsAppClient(ctx); err != nil {
+		return fmt.Errorf("recreate client: %w", err)
 	}
 
 	c.notePairingEvent("unlinked", "WhatsApp unlinked. Scan a new QR to connect.")

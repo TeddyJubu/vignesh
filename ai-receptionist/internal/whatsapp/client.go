@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strings"
 	"sync"
 	"time"
 
@@ -19,14 +20,15 @@ import (
 
 type Client struct {
 	WM        *whatsmeow.Client
+	container *sqlstore.Container
 	onMessage func(*events.Message)
 	Sent      *OutboundTracker
 
-	ctx     context.Context
-	pairMu  sync.Mutex
-	pairGen int
+	ctx        context.Context
+	pairMu     sync.Mutex
+	pairGen    int
 	pairCancel context.CancelFunc
-	pairing pairingState
+	pairing    pairingState
 }
 
 func New(ctx context.Context, dbPath string, onMessage func(*events.Message)) (*Client, error) {
@@ -41,9 +43,38 @@ func New(ctx context.Context, dbPath string, onMessage func(*events.Message)) (*
 	}
 	clientLog := waLog.Stdout("Client", "INFO", true)
 	wm := whatsmeow.NewClient(device, clientLog)
-	c := &Client{WM: wm, onMessage: onMessage, Sent: NewOutboundTracker(), ctx: ctx}
+	c := &Client{
+		WM:        wm,
+		container: container,
+		onMessage: onMessage,
+		Sent:      NewOutboundTracker(),
+		ctx:       ctx,
+	}
 	wm.AddEventHandler(c.eventHandler)
 	return c, nil
+}
+
+func isDeletedDeviceErr(err error) bool {
+	return err != nil && strings.Contains(err.Error(), "deleted device")
+}
+
+// recreateWhatsAppClient replaces the in-memory client after the device store was deleted (e.g. unlink).
+func (c *Client) recreateWhatsAppClient(ctx context.Context) error {
+	if c == nil || c.container == nil {
+		return fmt.Errorf("whatsapp sqlstore not configured")
+	}
+	if c.WM != nil {
+		c.WM.Disconnect()
+	}
+	device, err := c.container.GetFirstDevice(ctx)
+	if err != nil {
+		return fmt.Errorf("device: %w", err)
+	}
+	clientLog := waLog.Stdout("Client", "INFO", true)
+	wm := whatsmeow.NewClient(device, clientLog)
+	wm.AddEventHandler(c.eventHandler)
+	c.WM = wm
+	return nil
 }
 
 func (c *Client) eventHandler(evt interface{}) {
@@ -65,6 +96,9 @@ func (c *Client) eventHandler(evt interface{}) {
 			reason = fmt.Sprintf(" (%s)", v.Reason)
 		}
 		fmt.Fprintf(os.Stderr, "Logged out from WhatsApp%s — starting new QR pairing...\n", reason)
+		if err := c.recreateWhatsAppClient(c.ctx); err != nil {
+			fmt.Fprintln(os.Stderr, "recreate client:", err)
+		}
 		c.startPairing()
 	}
 }
@@ -123,6 +157,15 @@ func (c *Client) runPairingLoginLoop(ctx context.Context, gen int) {
 		if err := c.WM.Connect(); err != nil {
 			if ctx.Err() != nil {
 				return
+			}
+			if isDeletedDeviceErr(err) {
+				if recErr := c.recreateWhatsAppClient(ctx); recErr != nil {
+					fmt.Fprintln(os.Stderr, "recreate client:", recErr)
+				} else {
+					fmt.Fprintln(os.Stderr, "WhatsApp client reset after deleted device — retrying QR pairing")
+				}
+				time.Sleep(time.Second)
+				continue
 			}
 			fmt.Fprintln(os.Stderr, "connect:", err)
 			time.Sleep(3 * time.Second)
