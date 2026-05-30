@@ -55,6 +55,7 @@ export async function apiFetch<T>(
   const res = await fetch(`${base}api${path}`, {
     ...init,
     headers,
+    credentials: 'same-origin',
     body: init.json !== undefined ? JSON.stringify(init.json) : init.body,
   })
 

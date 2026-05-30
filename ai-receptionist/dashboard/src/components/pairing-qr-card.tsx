@@ -31,7 +31,10 @@ export function PairingQRCard({ compact = false }: { compact?: boolean }) {
     if (token) headers['Authorization'] = `Bearer ${token}`
 
     const bust = encodeURIComponent(pairing.updated_at)
-    void fetch(`${apiBase()}api/pairing/qr.png?v=${bust}`, { headers })
+    void fetch(`${apiBase()}api/pairing/qr.png?v=${bust}`, {
+      headers,
+      credentials: 'same-origin',
+    })
       .then((res) => {
         if (!res.ok) throw new Error('qr fetch failed')
         return res.blob()
