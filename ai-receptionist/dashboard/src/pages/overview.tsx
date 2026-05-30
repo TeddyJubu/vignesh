@@ -7,6 +7,9 @@ import { apiFetch } from '@/lib/api'
 import type { ComposioStatus, ProviderPing, ProviderStatus } from '@/lib/models'
 import { useApiState } from '@/lib/use-api'
 import { Activity, RefreshCcw } from 'lucide-react'
+import { PairingQRCard } from '@/components/pairing-qr-card'
+import { usePairingOptional } from '@/lib/pairing-context'
+import { derivePairingStatus } from '@/lib/pairing-types'
 
 export function OverviewPage() {
   const status = useApiState<ProviderStatus>(() => apiFetch('/providers/status'), [])
@@ -19,6 +22,9 @@ export function OverviewPage() {
     () => apiFetch('/composio/status'),
     [],
   )
+  const pairingCtx = usePairingOptional()
+  const waStatus = derivePairingStatus(pairingCtx?.pairing ?? null)
+  const showPairing = waStatus !== 'connected'
 
   const providerHealthy = ping.data?.ok === true
   const providerLabel =
@@ -54,6 +60,10 @@ export function OverviewPage() {
             under <code>/api</code>.
           </AlertDescription>
         </Alert>
+      )}
+
+      {showPairing && (
+        <PairingQRCard compact />
       )}
 
       <div className="grid gap-4 md:grid-cols-2">

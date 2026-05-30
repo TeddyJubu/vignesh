@@ -12,9 +12,11 @@ import {
   Home,
   Menu,
   Settings,
+  Smartphone,
   Sparkles,
   Shield,
 } from 'lucide-react'
+import { PairingStatusChip } from '@/components/pairing-status-chip'
 
 type NavItem = {
   to: string
@@ -25,7 +27,10 @@ type NavItem = {
 const nav: Array<{ label: string; items: NavItem[] }> = [
   {
     label: 'Overview',
-    items: [{ to: '/', label: 'Overview', icon: Home }],
+    items: [
+      { to: '/', label: 'Overview', icon: Home },
+      { to: '/pair', label: 'WhatsApp pairing', icon: Smartphone },
+    ],
   },
   {
     label: 'Settings',
@@ -136,7 +141,9 @@ export function AppShell({ children }: PropsWithChildren) {
                 </div>
               </div>
 
-              <Tooltip>
+              <div className="flex items-center gap-2">
+                <PairingStatusChip />
+                <Tooltip>
                 <TooltipTrigger className={cn(buttonVariants({ variant: 'secondary', size: 'sm' }))}>
                   <span className="hidden sm:inline">Local</span>
                   <span className="sm:hidden">Local</span>
@@ -145,6 +152,7 @@ export function AppShell({ children }: PropsWithChildren) {
                   This UI expects the Go app to serve the API.
                 </TooltipContent>
               </Tooltip>
+              </div>
             </div>
           </header>
 

@@ -22,8 +22,9 @@ type Client struct {
 	onMessage func(*events.Message)
 	Sent      *OutboundTracker
 
-	ctx    context.Context
-	pairMu sync.Mutex
+	ctx     context.Context
+	pairMu  sync.Mutex
+	pairing pairingState
 }
 
 func New(ctx context.Context, dbPath string, onMessage func(*events.Message)) (*Client, error) {
@@ -51,8 +52,11 @@ func (c *Client) eventHandler(evt interface{}) {
 		}
 	case *events.Connected:
 		fmt.Println("WhatsApp connected")
+		c.clearPairingQR()
+		c.notePairingEvent("connected", "WhatsApp connected.")
 	case *events.Disconnected:
 		fmt.Println("WhatsApp disconnected")
+		c.notePairingEvent("disconnected", "WhatsApp disconnected — reconnecting…")
 	case *events.LoggedOut:
 		reason := ""
 		if v != nil {
@@ -102,16 +106,20 @@ func (c *Client) runPairingLoginLoop(ctx context.Context) {
 		retry := false
 		for evt := range qrChan {
 			if evt.Event == "code" {
+				c.noteQRCode(evt.Code)
 				fmt.Println("Scan this QR with WhatsApp (Linked Devices):")
 				qrterminal.GenerateHalfBlock(evt.Code, qrterminal.L, os.Stdout)
-				fmt.Println("(QR also in: journalctl -u ai-receptionist -n 80 --no-pager)")
+				fmt.Println("(QR also in dashboard → WhatsApp pairing, or journalctl -u ai-receptionist -n 80)")
 				continue
 			}
 			fmt.Println("Login event:", evt.Event)
 			switch evt.Event {
 			case "timeout":
+				c.notePairingEvent("timeout", "")
 				retry = true
 			case "success":
+				c.clearPairingQR()
+				c.notePairingEvent("success", "Linked successfully.")
 				_ = c.connectLinked(ctx)
 				if id := c.WM.Store.ID; id != nil {
 					fmt.Println("Session linked — listening for messages")

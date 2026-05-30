@@ -191,6 +191,7 @@ func main() {
 		api.SetWhatsAppClient(waClient)
 		api.SetPromptMaterials(promptTpl, styleExtra, instructionsMD)
 		api.SetPromptInvalidator(handler.InvalidatePromptCache)
+		api.StartPairingHub(ctx)
 		go func() {
 			fmt.Println("HTTP API listening on", httpAddr)
 			if err := api.Start(ctx, httpAddr); err != nil {
