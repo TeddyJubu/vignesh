@@ -35,6 +35,7 @@ async function consumePairingStream(
   const res = await fetch(`${apiBase()}api/pairing/stream`, {
     headers,
     signal,
+    credentials: 'same-origin',
   })
   if (!res.ok || !res.body) {
     throw new Error(`pairing stream failed (${res.status})`)

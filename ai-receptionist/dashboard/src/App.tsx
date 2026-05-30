@@ -73,14 +73,6 @@ export default function App() {
   useEffect(() => {
     let cancelled = false
     async function boot() {
-      const token = getSessionToken()
-      if (!token) {
-        if (!cancelled) {
-          setAuthed(false)
-          setReady(true)
-        }
-        return
-      }
       try {
         await apiFetch('/me')
         if (!cancelled) {
