@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Open WhatsApp DMs/groups to everyone; keep admin/owner on Teddy + Vignesh only."""
+"""Open WhatsApp DMs/groups to everyone; admin slash commands for owners only."""
 import re
 from pathlib import Path
 
@@ -29,15 +29,16 @@ def yaml_entries(key: str, items: list[str]) -> str:
 
 
 def main() -> None:
+    # dm_policy/group_policy open = ANYONE can message Stella.
+    # allow_admin_from only gates /admin slash commands — NOT inbound DMs.
+    # Do NOT set allow_from to owner phones when policy is open (models misread it as a blocklist).
     block = (
         "whatsapp:\n"
         "  gateway_restart_notification: false\n"
         "  group_sessions_per_user: true\n"
         "  dm_policy: open\n"
         "  group_policy: open\n"
-        f"{yaml_entries('allow_from', OWNERS)}\n"
         f"{yaml_entries('allow_admin_from', OWNERS)}\n"
-        f"{yaml_entries('group_allow_from', OWNERS)}\n"
         f"{yaml_entries('group_allow_admin_from', OWNERS)}\n"
     )
     text = CONFIG.read_text()
@@ -51,7 +52,7 @@ def main() -> None:
     else:
         env += "\nWHATSAPP_DM_POLICY=open\n"
     ENV.write_text(env)
-    print("ok: open DMs/groups; admin only for Teddy + Vignesh")
+    print("ok: open DMs/groups for everyone; allow_admin_from = Teddy + Vignesh only")
 
 
 if __name__ == "__main__":

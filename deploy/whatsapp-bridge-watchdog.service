@@ -1,0 +1,8 @@
+[Unit]
+Description=WhatsApp bridge send-ready watchdog
+After=whatsmeow-bridge.service network-online.target
+Wants=whatsmeow-bridge.service
+
+[Service]
+Type=oneshot
+ExecStart=/root/.hermes/scripts/whatsapp-bridge-watchdog.sh

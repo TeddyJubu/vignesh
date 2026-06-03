@@ -12,6 +12,7 @@ PATCHES=(
   patch-hermes-soul-autonomous-agent.py
   patch-hermes-soul-scrapling.py
   patch-hermes-soul-reports-delivery.py
+  patch-hermes-soul-whatsapp-access-crosschat.py
   patch-hermes-gateway-media-reports-fallback.py
   patch-hermes-soul-messy-prompts.py
   patch-hermes-soul-whatsapp-system-instruction.py
@@ -28,7 +29,19 @@ for p in "${PATCHES[@]}"; do
   ssh "$HOST" "python3 ${HERMES_SCRIPTS}/$(basename "$p")"
 done
 
+echo "==> Bridge connection health + watchdog"
+scp -q "$ROOT/patch-whatsmeow-bridge-connection-health.py" \
+  "$ROOT/whatsapp-bridge-watchdog.sh" \
+  "$ROOT/install-whatsapp-bridge-watchdog.sh" \
+  "$HOST:${HERMES_SCRIPTS}/"
+ssh "$HOST" "mkdir -p /root/.hermes/deploy"
+scp -q "$ROOT/../deploy/whatsapp-bridge-watchdog.service" \
+  "$ROOT/../deploy/whatsapp-bridge-watchdog.timer" \
+  "$HOST:/root/.hermes/deploy/"
+ssh "$HOST" "bash ${HERMES_SCRIPTS}/install-whatsapp-bridge-watchdog.sh"
+
 echo "==> Restart hermes-gateway"
 ssh "$HOST" "systemctl restart hermes-gateway && sleep 4 && systemctl is-active hermes-gateway"
 ssh "$HOST" "rg -n '^  default:' /root/.hermes/config.yaml | head -1"
+ssh "$HOST" "curl -sS http://127.0.0.1:3000/health | python3 -c \"import sys,json; d=json.load(sys.stdin); assert d.get('sendReady'), d\""
 echo "done"

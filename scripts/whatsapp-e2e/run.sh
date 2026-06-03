@@ -15,8 +15,11 @@ ssh vignesh 'curl -sS -o /dev/null -w "%{http_code}" -X POST http://127.0.0.1:30
   exit 2
 }
 
-echo "==> Health"
-ssh vignesh 'systemctl is-active hermes-gateway whatsmeow-bridge; curl -sS http://127.0.0.1:3000/health'
+echo "==> Health (requires sendReady)"
+ssh vignesh 'systemctl is-active hermes-gateway whatsmeow-bridge
+health=$(curl -sS http://127.0.0.1:3000/health)
+echo "$health"
+python3 -c "import json,sys; d=json.loads(sys.argv[1]); assert d.get(\"sendReady\"), d" "$health"'
 
 case "${1:-}" in
   --groups)

@@ -240,6 +240,8 @@ def deploy_prereqs() -> None:
         "patch-hermes-soul-multistep-plan.py",
         "patch-hermes-soul-messy-prompts.py",
         "patch-hermes-soul-whatsapp-system-instruction.py",
+        "patch-hermes-soul-whatsapp-access-crosschat.py",
+        "patch-whatsmeow-bridge-connection-health.py",
     ):
         path = scripts / name
         if path.is_file():
@@ -255,6 +257,12 @@ def deploy_prereqs() -> None:
     time.sleep(3)
     ssh("systemctl restart hermes-gateway", timeout=60)
     time.sleep(5)
+    r = ssh(
+        "curl -sS http://127.0.0.1:3000/health | python3 -c \"import sys,json; d=json.load(sys.stdin); assert d.get('sendReady'), d\"",
+        timeout=30,
+    )
+    if r.returncode != 0:
+        raise RuntimeError(f"bridge not sendReady: {r.stdout}\n{r.stderr}")
 
 
 def main() -> int:
