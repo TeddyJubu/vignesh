@@ -1,0 +1,4 @@
+name: reapply-gateway-sanitize
+description: Re-apply WhatsApp/tool-markup gateway sanitizer after Hermes upgrades
+events:
+  - gateway:startup

@@ -24,7 +24,7 @@ Ad source (if known): [e.g. Meta — Review & Maps Growth]
 
 Rules:
 1. Show a numbered PLAN (≤8 steps) in this DM first — then execute; do not stop after step 1.
-2. Research using web/tools: Google Maps presence, review count & recent trend, website/SEO basics, social links, obvious competitors nearby, decision-maker hints.
+2. Research using **Scrapling MCP** (`mcp_scrapling_get` / `fetch` / `stealthy_fetch`) on target URLs; avoid raw Google HTML scraping. Cover Maps presence, reviews, website/SEO basics, social links, competitors, decision-maker hints.
 3. Score Epicware fit 1–10 using our tiers (Foundation → Enterprise) — Singapore local businesses only unless I say otherwise.
 4. Flag disqualifiers silently (wrong vertical, too small, outside SG, competitor) per whatsapp-sales skill — if disqualified, say OPERATOR ONLY at top, do not draft outreach to the lead.
 5. Output: write full dossier to ~/.hermes/reports/lead-[slug]-[YYYYMMDD].md and send me the path + 5-bullet executive summary in DM. Attach with MEDIA: if the file is long.
