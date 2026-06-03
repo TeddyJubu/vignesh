@@ -1,0 +1,4 @@
+name: reapply-whatsapp-send-patch
+description: Re-apply send_message_tool WhatsApp JID patch after Hermes upgrades (gateway restarts)
+events:
+  - gateway:startup

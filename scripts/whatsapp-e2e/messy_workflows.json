@@ -1,0 +1,25 @@
+{
+  "defaults": {
+    "persona": "teddy_phone",
+    "min_score": 6,
+    "max_retries": 4,
+    "response_timeout_sec": 360,
+    "post_response_wait_sec": 75
+  },
+  "workflows": [
+    {
+      "id": "M1",
+      "title": "Messy lead research (no template)",
+      "prompt": "that salon vasan maps weak reviews epicware fit dossier dont whatsapp him",
+      "rubric": "messy_lead",
+      "response_timeout_sec": 420
+    },
+    {
+      "id": "M2",
+      "title": "Messy group poll (routing)",
+      "prompt": "grp we made stella manual poll 20min next wk sgt @gaya @me IN GROUP not dm — use the Stella Manual 1 @g.us JID from this session",
+      "rubric": "messy_group",
+      "response_timeout_sec": 360
+    }
+  ]
+}

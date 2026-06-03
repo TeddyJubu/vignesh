@@ -1,0 +1,32 @@
+{
+  "vignesh_phone": {
+    "senderId": "6590013157@s.whatsapp.net",
+    "chatId": "6590013157@s.whatsapp.net",
+    "senderName": "Vignesh Wadarajan"
+  },
+  "vignesh_lid": {
+    "senderId": "56676572987400:31@lid",
+    "chatId": "56676572987400@lid",
+    "senderName": "Vignesh Wadarajan"
+  },
+  "teddy_phone": {
+    "senderId": "8801521207499@s.whatsapp.net",
+    "chatId": "8801521207499@s.whatsapp.net",
+    "senderName": "Teddy"
+  },
+  "teddy_lid": {
+    "senderId": "87192181436622:34@lid",
+    "chatId": "87192181436622@lid",
+    "senderName": "Teddy"
+  },
+  "gaya": {
+    "senderId": "6590016046@s.whatsapp.net",
+    "chatId": "6590016046@s.whatsapp.net",
+    "senderName": "Gaya"
+  },
+  "stranger": {
+    "senderId": "15550009999@s.whatsapp.net",
+    "chatId": "15550009999@s.whatsapp.net",
+    "senderName": "Stranger"
+  }
+}

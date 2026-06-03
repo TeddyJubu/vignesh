@@ -1,0 +1,58 @@
+{
+  "defaults": {
+    "persona": "teddy_phone",
+    "min_score": 6,
+    "max_retries": 5,
+    "response_timeout_sec": 420,
+    "post_response_wait_sec": 90
+  },
+  "workflows": [
+    {
+      "id": "GW1",
+      "title": "Create group via bridge API + first message",
+      "persona": "teddy_phone",
+      "min_score": 6,
+      "max_retries": 4,
+      "response_timeout_sec": 300,
+      "prompt": "E2E-GROUP-GW1: Use POST http://127.0.0.1:3000/groups/create to create a group named \"E2E GW1\" with participants +6590016046 and +8801521207499. Set topic \"automated test\" via /groups/topic. Post in the group exactly: E2E-GW1-LIVE. Reply here with the group JID and DONE when finished. Show a numbered PLAN first, then execute each step.",
+      "rubric": "gw1"
+    },
+    {
+      "id": "GW2",
+      "title": "Create group, add participant, announce meeting poll",
+      "persona": "vignesh_phone",
+      "min_score": 6,
+      "max_retries": 5,
+      "response_timeout_sec": 360,
+      "prompt": "E2E-GROUP-GW2: Create WhatsApp group \"E2E GW2 Meet\" via bridge /groups/create with +6590016046 and +8801521207499. In the group, ask everyone to reply with their preferred meeting time next week (SGT). Do not DM the same poll text to individuals. Numbered PLAN first; complete all steps; end with DONE and the @g.us JID.",
+      "rubric": "gw2"
+    },
+    {
+      "id": "GW3",
+      "title": "Full meeting orchestration (group, prefs, book, email)",
+      "persona": "teddy_phone",
+      "min_score": 6,
+      "max_retries": 5,
+      "response_timeout_sec": 480,
+      "post_response_wait_sec": 120,
+      "prompt": "E2E-GROUP-GW3: Multi-step meeting setup. (1) PLAN with ≤8 numbered steps. (2) Create group \"E2E GW3 Meet\" via http://127.0.0.1:3000/groups/create with +6590016046 and +8801521207499. (3) Ask in the group for preferred meeting times (SGT, 20 min). (4) Simulate or record preferences and pick tomorrow 12:00 SGT. (5) Create a Google Calendar event for that slot (Composio). (6) Send email invites to both participants if Gmail is available; otherwise say what you would send. (7) Post final time in the group. (8) DM me DONE with group JID, calendar link/status, and email status.",
+      "rubric": "gw3",
+      "simulate_replies": [
+        {
+          "delay_sec": 45,
+          "persona": "gaya",
+          "body": "E2E-GROUP-GW3: I prefer tomorrow 12:00 SGT",
+          "is_group": true,
+          "chat_id_from_evidence": "group_jid"
+        },
+        {
+          "delay_sec": 55,
+          "persona": "teddy_phone",
+          "body": "E2E-GROUP-GW3: 12:00 SGT works for me",
+          "is_group": true,
+          "chat_id_from_evidence": "group_jid"
+        }
+      ]
+    }
+  ]
+}
