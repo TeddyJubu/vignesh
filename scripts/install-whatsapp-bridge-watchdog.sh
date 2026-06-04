@@ -6,8 +6,14 @@ HERMES_HOME="$(cd "$SCRIPT_DIR/.." && pwd)"
 HERMES_SCRIPTS="${HERMES_SCRIPTS:-$SCRIPT_DIR}"
 DEPLOY_DIR="${DEPLOY_DIR:-$HERMES_HOME/deploy}"
 
-install -m 0755 "$SCRIPT_DIR/whatsapp-bridge-watchdog.sh" "$HERMES_SCRIPTS/whatsapp-bridge-watchdog.sh"
-install -m 0755 "$SCRIPT_DIR/patch-whatsmeow-bridge-connection-health.py" "$HERMES_SCRIPTS/patch-whatsmeow-bridge-connection-health.py"
+_install_if_different() {
+  local src="$1" dst="$2" mode="$3"
+  if [ "$(readlink -f "$src")" != "$(readlink -f "$dst")" ]; then
+    install -m "$mode" "$src" "$dst"
+  fi
+}
+_install_if_different "$SCRIPT_DIR/whatsapp-bridge-watchdog.sh" "$HERMES_SCRIPTS/whatsapp-bridge-watchdog.sh" 0755
+_install_if_different "$SCRIPT_DIR/patch-whatsmeow-bridge-connection-health.py" "$HERMES_SCRIPTS/patch-whatsmeow-bridge-connection-health.py" 0755
 
 python3 "$HERMES_SCRIPTS/patch-whatsmeow-bridge-connection-health.py"
 cd /opt/whatsmeow-bridge
