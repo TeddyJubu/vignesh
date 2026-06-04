@@ -28,6 +28,9 @@ if [ -d "$LIB_SRC" ]; then
     cp -R "$LIB_SRC" "$HERMES_HOME/stella_action_verifier"
   fi
 fi
+if [ -f "$SCRIPT_DIR/outreach_tasks.py" ]; then
+  install -m 0644 "$SCRIPT_DIR/outreach_tasks.py" "$HERMES_HOME/scripts/outreach_tasks.py"
+fi
 find "$HERMES_HOME/stella_action_verifier" -name '__pycache__' -type d -exec rm -rf {} + 2>/dev/null || true
 
 if [ ! -f "$HERMES_HOME/action-verifier.json" ]; then

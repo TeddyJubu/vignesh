@@ -54,6 +54,20 @@ def has_booking_claim(text: str) -> bool:
     return bool(BOOKING_CLAIM_RE.search(text or ""))
 
 
+AMNESIA_CLAIM_RE = re.compile(
+    r"\b("
+    r"zero context|no context|don't remember|do not remember|"
+    r"not in (?:my )?memory|no past chat|remind me.*meeting|"
+    r"what are we meeting about|what game and what time\?"
+    r")\b",
+    re.I,
+)
+
+
+def has_amnesia_claim(text: str) -> bool:
+    return bool(AMNESIA_CLAIM_RE.search(text or ""))
+
+
 def needs_verification(response: str, user_message: str) -> bool:
     blob = f"{response}\n{user_message}"
     if has_send_claim(blob) or has_file_claim(blob) or has_booking_claim(blob):

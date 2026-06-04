@@ -14,6 +14,7 @@ PATCHES=(
   patch-hermes-soul-reports-delivery.py
   patch-hermes-soul-whatsapp-access-crosschat.py
   patch-hermes-soul-outbound-messaging.py
+  patch-hermes-soul-third-party-session.py
   patch-hermes-gateway-media-reports-fallback.py
   patch-hermes-soul-messy-prompts.py
   patch-hermes-soul-whatsapp-system-instruction.py
@@ -43,7 +44,9 @@ ssh "$HOST" "bash ${HERMES_SCRIPTS}/install-whatsapp-bridge-watchdog.sh"
 
 echo "==> Timezone SGT + send_message JID fix"
 scp -q "$ROOT/patch-hermes-systemd-timezone-sgt.sh" "$ROOT/patch-hermes-whatsapp-send.py" "$HOST:${HERMES_SCRIPTS}/"
-ssh "$HOST" "python3 ${HERMES_SCRIPTS}/patch-hermes-whatsapp-send.py && bash ${HERMES_SCRIPTS}/patch-hermes-systemd-timezone-sgt.sh"
+ssh "$HOST" "python3 ${HERMES_SCRIPTS}/patch-hermes-whatsapp-send.py && python3 ${HERMES_SCRIPTS}/patch-hermes-whatsapp-send-outreach.py && bash ${HERMES_SCRIPTS}/patch-hermes-systemd-timezone-sgt.sh"
+scp -q "$ROOT/outreach_tasks.py" "$HOST:${HERMES_SCRIPTS}/"
+ssh "$HOST" "python3 ${HERMES_SCRIPTS}/patch-hermes-gateway-outreach-context.py"
 
 echo "==> Action verifier hook (fast model + log proof)"
 scp -q "$ROOT/install-hermes-action-verifier-hook.sh" \

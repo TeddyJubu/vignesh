@@ -7,7 +7,13 @@ import urllib.request
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from .claims import extract_phones, has_file_claim, has_send_claim, needs_verification
+from .claims import (
+    extract_phones,
+    has_amnesia_claim,
+    has_file_claim,
+    has_send_claim,
+    needs_verification,
+)
 from .evidence import TurnEvidence, collect, jid_digits, normalize_jid
 
 
@@ -95,6 +101,56 @@ def deterministic_verify(
                 )
             )
 
+    return issues
+
+
+def _load_outreach_task(chat_id: str) -> dict | None:
+    try:
+        import sys
+        from pathlib import Path
+
+        home = Path.home() / ".hermes"
+        scripts = home / "scripts"
+        if str(scripts) not in sys.path:
+            sys.path.insert(0, str(scripts))
+        from outreach_tasks import load_task
+
+        return load_task(chat_id)
+    except Exception:
+        return None
+
+
+def verify_amnesia(
+    response: str,
+    chat_id: str,
+    user_message: str,
+) -> list[VerifyIssue]:
+    """Flag false 'no context' when outreach task file proves prior outbound."""
+    issues: list[VerifyIssue] = []
+    if not has_amnesia_claim(response):
+        return issues
+
+    task = _load_outreach_task(chat_id)
+    if not task and not _owner_chat(chat_id):
+        for jid in extract_phones(user_message + "\n" + response):
+            if jid_digits(jid) not in {"6590013157", "8801521207499"}:
+                task = _load_outreach_task(jid)
+                if task:
+                    break
+
+    if not task:
+        return issues
+
+    issues.append(
+        VerifyIssue(
+            claim="Amnesia / zero-context claim",
+            status="failed",
+            proof=(
+                f"Outreach task exists for {task.get('jid')}: contact_name={task.get('contact_name')!r}; "
+                f"last_outbound={str(task.get('last_outbound', ''))[:200]!r}"
+            ),
+        )
+    )
     return issues
 
 
@@ -206,6 +262,21 @@ def verify_turn(
     response = (response or "")[:max_chars]
     user_message = (user_message or "")[:max_chars]
 
+    amnesia = verify_amnesia(response, chat_id, user_message)
+    if amnesia:
+        summary = "outreach_task=exists"
+        use_llm = str(cfg.get("use_llm", "on_fail")).lower()
+        if use_llm in ("always", "on_fail"):
+            ev = collect(session_id, chat_id, int(cfg.get("evidence_window_sec", 300)))
+            amnesia = llm_verify(
+                str(cfg.get("model", "google/gemma-3-4b-it")),
+                response,
+                user_message,
+                ev,
+                amnesia,
+            )
+        return VerifyResult(ok=False, issues=amnesia, evidence_summary=summary, used_llm=bool(use_llm in ("always", "on_fail")))
+
     if not needs_verification(response, user_message):
         return VerifyResult(ok=True)
 
@@ -240,9 +311,10 @@ def format_correction(issues: list[VerifyIssue], evidence_summary: str) -> str:
             f"Evidence snapshot: {evidence_summary}",
             "",
             "Required now:",
+            "- Read ~/.hermes/tasks/outreach/<digits>.json and use contact_name + last_outbound.",
             "- If you claimed you messaged someone: call send_message to whatsapp:+<E.164> and confirm success.",
             "- If the date was wrong: run TZ=Asia/Singapore date, fix the outbound text, then send.",
-            "- Reply to the owner in ONE short message — correction only, no false confidence.",
+            "- Reply in ONE short message — correction only, no false confidence or fake amnesia.",
         ]
     )
     return "\n".join(lines)
