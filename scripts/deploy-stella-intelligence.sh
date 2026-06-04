@@ -13,6 +13,7 @@ PATCHES=(
   patch-hermes-soul-scrapling.py
   patch-hermes-soul-reports-delivery.py
   patch-hermes-soul-whatsapp-access-crosschat.py
+  patch-hermes-soul-outbound-messaging.py
   patch-hermes-gateway-media-reports-fallback.py
   patch-hermes-soul-messy-prompts.py
   patch-hermes-soul-whatsapp-system-instruction.py
@@ -39,6 +40,10 @@ scp -q "$ROOT/../deploy/whatsapp-bridge-watchdog.service" \
   "$ROOT/../deploy/whatsapp-bridge-watchdog.timer" \
   "$HOST:/root/.hermes/deploy/"
 ssh "$HOST" "bash ${HERMES_SCRIPTS}/install-whatsapp-bridge-watchdog.sh"
+
+echo "==> Timezone SGT + send_message JID fix"
+scp -q "$ROOT/patch-hermes-systemd-timezone-sgt.sh" "$ROOT/patch-hermes-whatsapp-send.py" "$HOST:${HERMES_SCRIPTS}/"
+ssh "$HOST" "python3 ${HERMES_SCRIPTS}/patch-hermes-whatsapp-send.py && bash ${HERMES_SCRIPTS}/patch-hermes-systemd-timezone-sgt.sh"
 
 echo "==> Restart hermes-gateway"
 ssh "$HOST" "systemctl restart hermes-gateway && sleep 4 && systemctl is-active hermes-gateway"

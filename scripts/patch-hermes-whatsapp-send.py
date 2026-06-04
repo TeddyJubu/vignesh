@@ -28,6 +28,27 @@ def main() -> None:
         changed = True
         print("patched _parse_target_ref")
 
+    if "Model mistake: bare WhatsApp JID used as platform" not in text:
+        needle_jid = (
+            '    target_ref = parts[1].strip() if len(parts) > 1 else None\n'
+            "    chat_id = None"
+        )
+        insert_jid = (
+            '    target_ref = parts[1].strip() if len(parts) > 1 else None\n'
+            "    # Model mistake: bare WhatsApp JID used as platform (no whatsapp: prefix)\n"
+            "    import re as _re_wa\n"
+            '    _wa_jid_only = _re_wa.compile(r"^\\+?\\d+@s\\.whatsapp\\.net$", _re_wa.I)\n'
+            "    if target_ref is None and _wa_jid_only.match(platform_name):\n"
+            "        target_ref = platform_name.strip()\n"
+            '        platform_name = "whatsapp"\n'
+            "    chat_id = None"
+        )
+        if needle_jid not in text:
+            raise SystemExit("needle_jid missing")
+        text = text.replace(needle_jid, insert_jid, 1)
+        changed = True
+        print("patched JID-as-platform normalization")
+
     if "Refusing home-channel send" not in text:
         needle2 = (
             "        if home:\n"
