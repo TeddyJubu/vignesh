@@ -104,7 +104,99 @@ def record_whatsapp_outreach(
 
     path = task_path(jid)
     path.write_text(json.dumps(task, indent=2), encoding="utf-8")
+    write_outreach_memory_md(task)
+    sync_outreach_to_honcho(task)
     return task
+
+
+def honcho_session_key(jid: str) -> str:
+    return f"agent-main-whatsapp-dm-{jid_digits(jid)}"
+
+
+def write_outreach_memory_md(task: dict[str, Any]) -> None:
+    """File-based memory Hermes can load on session start."""
+    mem_dir = _home() / "memories"
+    mem_dir.mkdir(parents=True, exist_ok=True)
+    digits = jid_digits(task.get("jid", ""))
+    path = mem_dir / f"outreach-{digits}.md"
+    name = task.get("contact_name") or "contact"
+    display = task.get("whatsapp_display_name") or ""
+    lines = [
+        f"# Outreach: {name} ({task.get('jid', '')})",
+        "",
+        f"- **Use name:** {name}",
+    ]
+    if display and display.lower() != name.lower():
+        lines.append(f"- **WhatsApp profile name:** {display} (still call them {name})")
+    if task.get("owner_request"):
+        lines.append(f"- **Owner request:** {task['owner_request']}")
+    if task.get("last_outbound"):
+        lines.append(f"- **Last outbound message:** {task['last_outbound']}")
+    lines.append("")
+    path.write_text("\n".join(lines), encoding="utf-8")
+
+
+def sync_outreach_to_honcho(task: dict[str, Any]) -> bool:
+    """Push outreach facts + assistant outbound into Honcho for this DM session."""
+    jid = task.get("jid") or ""
+    if not jid or is_owner_jid(jid):
+        return False
+    key = honcho_session_key(jid)
+    outbound = (task.get("last_outbound") or "").strip()
+    if not outbound:
+        return False
+
+    try:
+        from plugins.memory.honcho.client import HonchoClientConfig, get_honcho_client
+        from plugins.memory.honcho.session import HonchoSessionManager
+    except ImportError:
+        return False
+
+    try:
+        cfg = HonchoClientConfig.from_global_config()
+        if not cfg.enabled:
+            return False
+        client = get_honcho_client(cfg)
+        manager = HonchoSessionManager(
+            honcho=client,
+            config=cfg,
+            context_tokens=cfg.context_tokens,
+            runtime_user_peer_name=jid_digits(jid),
+        )
+        session = manager.get_or_create(key)
+
+        snippet = outbound[:100]
+        if not any(snippet in str(m.get("content") or "") for m in session.messages):
+            session.add_message("assistant", outbound, mirror=True, mirror_source="outreach_honcho")
+            manager._flush_session(session)
+
+        name = task.get("contact_name") or "contact"
+        display = task.get("whatsapp_display_name") or ""
+        facts = [
+            f"Preferred name: {name}",
+            f"WhatsApp JID: {jid}",
+        ]
+        if display and display.lower() != name.lower():
+            facts.append(f"WhatsApp display name: {display} (call them {name})")
+        if task.get("owner_request"):
+            facts.append(f"Scheduling context: {task['owner_request'][:500]}")
+        facts.append(f"Last outbound: {outbound[:400]}")
+
+        existing = manager.get_peer_card(key) or []
+        merged = list(dict.fromkeys([*existing, *facts]))[:40]
+        manager.set_peer_card(key, merged, peer="user")
+
+        try:
+            summary = (
+                f"Active WhatsApp outreach to {name}: {task.get('owner_request', '')[:300]}. "
+                f"Last message sent: {outbound[:200]}"
+            )
+            manager.create_conclusion(key, summary, peer="user")
+        except Exception:
+            pass
+        return True
+    except Exception:
+        return False
 
 
 def format_context_block(task: dict[str, Any], whatsapp_display_name: str = "") -> str:
@@ -159,10 +251,18 @@ def maybe_inject_whatsapp_outreach(
             pass
 
     block = format_context_block(task, user_display_name)
+    mem_md = _home() / "memories" / f"outreach-{jid_digits(jid)}.md"
+    if mem_md.is_file():
+        try:
+            block += "\n\n[OUTREACH MEMORY FILE]\n" + mem_md.read_text(encoding="utf-8")[:3000]
+        except OSError:
+            pass
     context_prompt = block + "\n\n" + (context_prompt or "")
 
+    sync_outreach_to_honcho(task)
+
     outbound = (task.get("last_outbound") or "").strip()
-    if not outbound or len(history) >= 2:
+    if not outbound:
         return history, context_prompt
 
     snippet = outbound[:80]

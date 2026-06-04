@@ -12,7 +12,7 @@ MARKER = "outreach_tasks.record_whatsapp_outreach"
 
 def main() -> None:
     text = TOOL.read_text(encoding="utf-8")
-    if MARKER in text:
+    if text.count(MARKER) >= 1:
         print("ok: send outreach record already patched")
         return
 
