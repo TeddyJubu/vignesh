@@ -1,0 +1,9 @@
+{
+  "enabled": true,
+  "platforms": ["whatsapp"],
+  "model": "google/gemma-3-4b-it",
+  "use_llm": "on_fail",
+  "max_response_chars": 4000,
+  "evidence_window_sec": 300,
+  "inject_correction": true
+}

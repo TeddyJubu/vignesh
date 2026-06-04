@@ -13,6 +13,7 @@ PATCH_SCRIPTS = (
     Path.home() / ".hermes" / "scripts" / "patch-hermes-gateway-whatsapp-sanitize.py",
     Path.home() / ".hermes" / "scripts" / "patch-hermes-agent-minimax-tool-leak.py",
     Path.home() / ".hermes" / "scripts" / "patch-hermes-gateway-media-reports-fallback.py",
+    Path.home() / ".hermes" / "scripts" / "patch-hermes-gateway-agent-end-verifier.py",
 )
 
 

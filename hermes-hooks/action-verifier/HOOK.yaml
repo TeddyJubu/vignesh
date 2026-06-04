@@ -1,0 +1,4 @@
+name: action-verifier
+description: Verify outbound claims against logs; inject correction turn for Stella on failure
+events:
+  - agent:end

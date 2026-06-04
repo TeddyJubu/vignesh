@@ -45,6 +45,12 @@ echo "==> Timezone SGT + send_message JID fix"
 scp -q "$ROOT/patch-hermes-systemd-timezone-sgt.sh" "$ROOT/patch-hermes-whatsapp-send.py" "$HOST:${HERMES_SCRIPTS}/"
 ssh "$HOST" "python3 ${HERMES_SCRIPTS}/patch-hermes-whatsapp-send.py && bash ${HERMES_SCRIPTS}/patch-hermes-systemd-timezone-sgt.sh"
 
+echo "==> Action verifier hook (fast model + log proof)"
+scp -q "$ROOT/install-hermes-action-verifier-hook.sh" \
+  "$ROOT/patch-hermes-gateway-agent-end-verifier.py" \
+  "$HOST:${HERMES_SCRIPTS}/"
+ssh "$HOST" "bash ${HERMES_SCRIPTS}/install-hermes-action-verifier-hook.sh"
+
 echo "==> Restart hermes-gateway"
 ssh "$HOST" "systemctl restart hermes-gateway && sleep 4 && systemctl is-active hermes-gateway"
 ssh "$HOST" "rg -n '^  default:' /root/.hermes/config.yaml | head -1"
